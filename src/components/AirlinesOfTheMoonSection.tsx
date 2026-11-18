@@ -118,6 +118,63 @@ export function AirlinesOfTheMoonSection({
   const [adminPhaseOverride, setAdminPhaseOverride] = useState<
     'auto' | AotmEventPhase
   >('auto');
+  const [fireModeOverride, setFireModeOverride] = useState<'auto' | 'red' | 'blue'>(
+    'auto'
+  );
+
+  const openMs = new Date(MOON_EVENT_OPEN_ISO).getTime();
+  const diffToOpenMs = openMs - nowMs;
+  const daysUntilOpen = diffToOpenMs / (1000 * 60 * 60 * 24);
+
+  const resolvedFireMode = useMemo(() => {
+    if (fireModeOverride !== 'auto') return fireModeOverride;
+    // -3 days until Event Day (H): Blue Fire
+    if (daysUntilOpen <= 3) return 'blue';
+    // -7 to -3 days before event opening: Red Fire
+    return 'red';
+  }, [fireModeOverride, daysUntilOpen]);
+
+  const [scrollY, setScrollY] = useState(0);
+  const [isExtinguished, setIsExtinguished] = useState(false);
+  const [showWaterSplash, setShowWaterSplash] = useState(false);
+  const [pointerStartX, setPointerStartX] = useState<number | null>(null);
+
+  const handlePointerDown = (e: React.PointerEvent) => {
+    setPointerStartX(e.clientX);
+  };
+
+  const handlePointerMove = (e: React.PointerEvent) => {
+    if (pointerStartX === null) return;
+    const diff = e.clientX - pointerStartX;
+    if (Math.abs(diff) > 40) {
+      triggerWaterEasterEgg();
+      setPointerStartX(null);
+    }
+  };
+
+  const handlePointerUp = () => {
+    setPointerStartX(null);
+  };
+
+  const triggerWaterEasterEgg = () => {
+    if (isExtinguished || showWaterSplash) return;
+    setShowWaterSplash(true);
+    window.setTimeout(() => {
+      setIsExtinguished(true);
+    }, 600);
+    window.setTimeout(() => {
+      setIsExtinguished(false);
+      setShowWaterSplash(false);
+    }, 3200);
+  };
+
+  useEffect(() => {
+    const handleScroll = () => {
+      setScrollY(window.scrollY);
+    };
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
 
   // Form states
   const [airlineName, setAirlineName] = useState('');
@@ -734,24 +791,65 @@ export function AirlinesOfTheMoonSection({
               </a>
             </div>
 
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className="mr-1 text-[11px] font-medium text-slate-400">
-                Simulasi Fase:
-              </span>
-              {ADMIN_PHASE_OPTIONS.map((opt) => (
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="mr-1 text-[11px] font-medium text-slate-400">
+                  Simulasi Fase:
+                </span>
+                {ADMIN_PHASE_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => setAdminPhaseOverride(opt.value)}
+                    className={`rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors whitespace-nowrap ${
+                      adminPhaseOverride === opt.value
+                        ? 'bg-[#D4AF37] text-[#080E18] font-semibold'
+                        : 'border border-white/12 bg-[#080E18] text-slate-300 hover:text-white'
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex flex-wrap items-center gap-1.5 border-l border-white/10 pl-3">
+                <span className="mr-1 text-[11px] font-medium text-slate-400">
+                  Efek Api:
+                </span>
                 <button
-                  key={opt.value}
                   type="button"
-                  onClick={() => setAdminPhaseOverride(opt.value)}
-                  className={`rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors whitespace-nowrap ${
-                    adminPhaseOverride === opt.value
+                  onClick={() => setFireModeOverride('auto')}
+                  className={`rounded-md px-2 py-1 text-[11px] font-medium transition-colors whitespace-nowrap ${
+                    fireModeOverride === 'auto'
                       ? 'bg-[#D4AF37] text-[#080E18] font-semibold'
                       : 'border border-white/12 bg-[#080E18] text-slate-300 hover:text-white'
                   }`}
                 >
-                  {opt.label}
+                  Otomatis
                 </button>
-              ))}
+                <button
+                  type="button"
+                  onClick={() => setFireModeOverride('red')}
+                  className={`rounded-md px-2 py-1 text-[11px] font-medium transition-colors whitespace-nowrap ${
+                    fireModeOverride === 'red'
+                      ? 'bg-orange-600 text-white font-semibold'
+                      : 'border border-white/12 bg-[#080E18] text-orange-300 hover:text-white'
+                  }`}
+                >
+                  🔥 Api Merah (H-7 s.d. -3)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFireModeOverride('blue')}
+                  className={`rounded-md px-2 py-1 text-[11px] font-medium transition-colors whitespace-nowrap ${
+                    fireModeOverride === 'blue'
+                      ? 'bg-cyan-600 text-white font-semibold'
+                      : 'border border-white/12 bg-[#080E18] text-cyan-300 hover:text-white'
+                  }`}
+                >
+                  🔥 Api Biru (H-3 s.d. H)
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -767,16 +865,67 @@ export function AirlinesOfTheMoonSection({
           <div className="space-y-6">
             <div className="grid grid-cols-1 gap-8 border-b border-white/10 pb-8 lg:grid-cols-12 lg:items-end">
               <div className="lg:col-span-7">
-                <p className="text-xs font-medium text-[#D4AF37]">
-                  Kompetisi Resmi Nusantara Alliance · 26–28 November 2026
-                </p>
+                <div className="mb-2">
+                  <p className="text-xs font-medium text-[#D4AF37]">
+                    Kompetisi Resmi Nusantara Alliance · 26–28 November 2026
+                  </p>
+                </div>
 
-                <h1
-                  className="mt-3 font-display font-bold tracking-tight text-white text-balance"
-                  style={{ fontSize: 'clamp(2.25rem, 4vw, 3.25rem)', lineHeight: 1.08 }}
+                <div
+                  className="relative mt-3 cursor-pointer select-none group"
+                  onClick={triggerWaterEasterEgg}
+                  onPointerDown={handlePointerDown}
+                  onPointerMove={handlePointerMove}
+                  onPointerUp={handlePointerUp}
+                  title="Klik atau geser untuk Easter Egg Air & Api!"
                 >
-                  AOTM Nusantara Alliance
-                </h1>
+                  {/* Scroll-following trailing fire ember effect */}
+                  <div
+                    className="absolute inset-0 -z-10 pointer-events-none overflow-visible"
+                    style={{
+                      transform: `translateY(${scrollY * 0.22}px)`,
+                    }}
+                  >
+                    {!isExtinguished && (
+                      <>
+                        <div
+                          className={`absolute -left-4 top-2 h-12 w-12 rounded-full blur-xl opacity-60 ${
+                            resolvedFireMode === 'blue' ? 'bg-cyan-400' : 'bg-orange-500'
+                          }`}
+                        />
+                        <div
+                          className={`absolute right-10 bottom-0 h-10 w-10 rounded-full blur-xl opacity-50 ${
+                            resolvedFireMode === 'blue' ? 'bg-blue-500' : 'bg-red-600'
+                          }`}
+                        />
+                      </>
+                    )}
+                  </div>
+
+                  {/* Water Splash Easter Egg Overlay (Silent splash wash) */}
+                  {showWaterSplash && (
+                    <div className="absolute inset-0 z-20 flex items-center justify-center pointer-events-none overflow-visible">
+                      <div className="absolute inset-0 bg-blue-500/40 rounded-2xl blur-xl water-splash-effect" />
+                    </div>
+                  )}
+
+                  <h1
+                    className={`font-display font-bold tracking-tight text-balance transition-all duration-500 ${
+                      isExtinguished
+                        ? 'extinguished-text'
+                        : resolvedFireMode === 'blue'
+                          ? 'fire-chars-blue'
+                          : 'fire-chars-red'
+                    }`}
+                    style={{ fontSize: 'clamp(2.25rem, 4vw, 3.25rem)', lineHeight: 1.08 }}
+                  >
+                    AOTM Nusantara Alliance
+                  </h1>
+
+                  <p className="mt-1 text-[11px] text-slate-400 opacity-0 group-hover:opacity-100 transition-opacity">
+                    💧 Easter Egg: Klik atau geser (swipe) tulisan ini untuk menyiram air &amp; memadamkan api!
+                  </p>
+                </div>
 
                 {/* Running Marquee Text of Submitted Accounts */}
                 <div className="mt-3.5 flex items-center overflow-hidden rounded-lg border border-white/10 bg-[#0D1524]/80 px-3 py-1.5 backdrop-blur-sm">
@@ -1568,6 +1717,53 @@ export function AirlinesOfTheMoonSection({
         />
       )}
 
+      {/* Floating Scroll Fire Follower (follows down when scrolling and fades out) */}
+      {(() => {
+        const showScrollFireFollower = scrollY > 70 && scrollY < 900;
+        const scrollOpacity = Math.max(0, Math.min(1, 1 - (scrollY - 150) / 600));
+        if (!showScrollFireFollower) return null;
+        return (
+          <div
+            className="fixed bottom-6 right-6 z-50 pointer-events-none hidden sm:flex items-center gap-3 rounded-2xl border px-4 py-3 shadow-2xl backdrop-blur-md transition-opacity duration-300"
+            style={{
+              opacity: scrollOpacity,
+              borderColor:
+                resolvedFireMode === 'blue'
+                  ? 'rgba(0, 213, 255, 0.45)'
+                  : 'rgba(255, 85, 0, 0.45)',
+              backgroundColor:
+                resolvedFireMode === 'blue'
+                  ? 'rgba(8, 14, 24, 0.9)'
+                  : 'rgba(13, 15, 20, 0.9)',
+            }}
+          >
+            <span className="relative flex h-3 w-3">
+              <span
+                className={`absolute inline-flex h-full w-full animate-ping rounded-full opacity-75 ${
+                  resolvedFireMode === 'blue' ? 'bg-cyan-400' : 'bg-orange-500'
+                }`}
+              />
+              <span
+                className={`relative inline-flex h-3 w-3 rounded-full ${
+                  resolvedFireMode === 'blue' ? 'bg-cyan-500' : 'bg-orange-600'
+                }`}
+              />
+            </span>
+            <div className="text-left">
+              <p className="font-display text-xs font-bold text-white">
+                {resolvedFireMode === 'blue'
+                  ? '🔥 Blue Flame Berkobar'
+                  : '🔥 Red Fire Berkobar'}
+              </p>
+              <p className="text-[10px] text-slate-400">
+                Mengikuti guliran halaman...
+              </p>
+            </div>
+          </div>
+        );
+      })()}
+
     </section>
   );
 }
+
