@@ -1,0 +1,8 @@
+{
+  "name": "Akasha Alliance",
+  "description": "Portal resmi Akasha Alliance — direktori maskapai anggota, peringkat armada & finansial, berita penerbangan, marketplace codeshare, kompetisi, dan regulasi aliansi.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

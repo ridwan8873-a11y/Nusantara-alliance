@@ -1,0 +1,379 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 1. Global Safety Net (Default-Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // 2. Hardened Global Helpers
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isAdmin() {
+      return isVerifiedUser() && (
+        request.auth.token.email == 'ridwan8873@gmail.com' ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    // 3. Entity Validation Blueprints
+    function isValidMoonSubmissionBase(data) {
+      return data.keys().hasAll([
+          'airlineName',
+          'alliance',
+          'totalProfit',
+          'codeshareProfit',
+          'operatingProfit',
+          'revenue',
+          'operatingCost',
+          'profitPhotoDataUrl',
+          'airlinePhotoDataUrl',
+          'submittedByUid',
+          'submittedByEmail',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.airlineName is string && data.airlineName.size() >= 2 && data.airlineName.size() <= 100
+        && data.alliance is string && data.alliance.size() >= 2 && data.alliance.size() <= 100
+        && data.totalProfit is number && data.totalProfit >= -1000000000000000 && data.totalProfit <= 1000000000000000
+        && data.codeshareProfit is number && data.codeshareProfit >= -1000000000000000 && data.codeshareProfit <= 1000000000000000
+        && data.operatingProfit is number && data.operatingProfit >= -1000000000000000 && data.operatingProfit <= 1000000000000000
+        && data.revenue is number && data.revenue >= 0 && data.revenue <= 1000000000000000
+        && data.operatingCost is number && data.operatingCost >= 0 && data.operatingCost <= 1000000000000000
+        && data.profitPhotoDataUrl is string && data.profitPhotoDataUrl.size() >= 30 && data.profitPhotoDataUrl.size() <= 350000
+        && data.profitPhotoDataUrl[0:11] == 'data:image/'
+        && data.airlinePhotoDataUrl is string && data.airlinePhotoDataUrl.size() >= 30 && data.airlinePhotoDataUrl.size() <= 350000
+        && data.airlinePhotoDataUrl[0:11] == 'data:image/'
+        && isValidId(data.submittedByUid)
+        && data.submittedByEmail is string && data.submittedByEmail.size() >= 5 && data.submittedByEmail.size() <= 160
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidMoonSubmissionCreate(data) {
+      return isValidMoonSubmissionBase(data)
+        && data.keys().hasOnly([
+          'airlineName',
+          'alliance',
+          'totalProfit',
+          'codeshareProfit',
+          'operatingProfit',
+          'revenue',
+          'operatingCost',
+          'profitPhotoDataUrl',
+          'airlinePhotoDataUrl',
+          'submittedByUid',
+          'submittedByEmail',
+          'createdAt',
+          'updatedAt'
+        ]);
+    }
+
+    function isValidMoonSubmissionAdminUpdate(data) {
+      return isValidMoonSubmissionBase(data)
+        && data.keys().hasOnly([
+          'airlineName',
+          'alliance',
+          'totalProfit',
+          'codeshareProfit',
+          'operatingProfit',
+          'revenue',
+          'operatingCost',
+          'profitPhotoDataUrl',
+          'airlinePhotoDataUrl',
+          'submittedByUid',
+          'submittedByEmail',
+          'judgeStatus',
+          'adminScore',
+          'adminNote',
+          'createdAt',
+          'updatedAt'
+        ])
+        && (!('judgeStatus' in data) || (data.judgeStatus in ['Menunggu', 'Terverifikasi', 'Juara 1', 'Juara 2', 'Juara 3', 'Diskualifikasi']))
+        && (!('adminScore' in data) || (data.adminScore is number && data.adminScore >= 0 && data.adminScore <= 100))
+        && (!('adminNote' in data) || (data.adminNote is string && data.adminNote.size() <= 500));
+    }
+
+    function isValidChatMessage(data) {
+      return data.keys().hasAll(['senderUid', 'senderName', 'senderRole', 'text', 'createdAt'])
+        && data.keys().hasOnly(['senderUid', 'senderName', 'senderRole', 'text', 'photoDataUrl', 'rankLabel', 'createdAt'])
+        && isValidId(data.senderUid)
+        && data.senderName is string && data.senderName.size() >= 1 && data.senderName.size() <= 80
+        && data.senderRole in ['admin', 'member']
+        && data.text is string && data.text.size() <= 1000
+        && (data.text.size() >= 1 || ('photoDataUrl' in data))
+        && (!('photoDataUrl' in data) || (
+          data.photoDataUrl is string
+          && data.photoDataUrl.size() >= 30
+          && data.photoDataUrl.size() <= 350000
+          && data.photoDataUrl[0:11] == 'data:image/'
+        ))
+        && (!('rankLabel' in data) || (
+          data.rankLabel in ['Top 1', 'Top 2', 'Top 3', 'Top 4', 'Top 5', 'Top 6', 'Top 7', 'Top 8', 'Top 9', 'Top 10']
+        ))
+        && data.createdAt is timestamp;
+    }
+
+    function isValidAotmWinner(data) {
+      return data.keys().hasAll(['rank', 'airlineName', 'alliance', 'adminScore', 'judgeStatus', 'publishedAt', 'updatedAt'])
+        && data.keys().hasOnly(['rank', 'airlineName', 'alliance', 'adminScore', 'judgeStatus', 'photoDataUrl', 'publishedAt', 'updatedAt'])
+        && data.rank is number && data.rank >= 1 && data.rank <= 10
+        && data.airlineName is string && data.airlineName.size() >= 2 && data.airlineName.size() <= 100
+        && data.alliance is string && data.alliance.size() >= 2 && data.alliance.size() <= 100
+        && data.adminScore is number && data.adminScore >= 0 && data.adminScore <= 100
+        && data.judgeStatus is string && data.judgeStatus.size() >= 1 && data.judgeStatus.size() <= 40
+        && (!('photoDataUrl' in data) || (
+          data.photoDataUrl is string
+          && data.photoDataUrl.size() >= 30
+          && data.photoDataUrl.size() <= 350000
+          && data.photoDataUrl[0:11] == 'data:image/'
+        ))
+        && data.publishedAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidOnlinePresence(data) {
+      return data.keys().hasAll(['uid', 'displayName', 'role', 'isOnline', 'lastSeenAt'])
+        && data.keys().hasOnly(['uid', 'displayName', 'role', 'avatarUrl', 'isOnline', 'lastSeenAt'])
+        && isValidId(data.uid)
+        && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 80
+        && data.role in ['admin', 'member']
+        && (!('avatarUrl' in data) || (
+          data.avatarUrl is string
+          && data.avatarUrl.size() >= 8
+          && data.avatarUrl.size() <= 500
+          && data.avatarUrl[0:8] == 'https://'
+        ))
+        && data.isOnline is bool
+        && data.lastSeenAt is timestamp;
+    }
+
+    function isValidAdminRecord(data) {
+      return data.keys().hasAll(['email', 'createdAt'])
+        && data.keys().hasOnly(['email', 'displayName', 'createdAt'])
+        && data.email is string && data.email.size() >= 5 && data.email.size() <= 160
+        && (!('displayName' in data) || (data.displayName is string && data.displayName.size() <= 100))
+        && data.createdAt is timestamp;
+    }
+
+    function isValidAllianceFollower(data) {
+      return data.keys().hasAll(['displayName', 'followedAt'])
+        && data.keys().hasOnly(['displayName', 'avatarUrl', 'followedAt'])
+        && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 80
+        && (!('avatarUrl' in data) || (
+          data.avatarUrl is string
+          && data.avatarUrl.size() >= 8
+          && data.avatarUrl.size() <= 500
+          && data.avatarUrl[0:8] == 'https://'
+        ))
+        && data.followedAt is timestamp;
+    }
+
+    function isValidAllianceRegistrationBase(data) {
+      return data.keys().hasAll(['ticketCode', 'airlineName', 'applicantId', 'status', 'createdAt', 'updatedAt'])
+        && data.ticketCode is string && data.ticketCode.size() >= 4 && data.ticketCode.size() <= 30
+        && data.airlineName is string && data.airlineName.size() >= 2 && data.airlineName.size() <= 100
+        && data.applicantId is string && data.applicantId.size() >= 4 && data.applicantId.size() <= 128
+        && data.status in ['pending', 'approved', 'rejected']
+        && (!('adminNote' in data) || (data.adminNote is string && data.adminNote.size() <= 300))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidAllianceRegistrationCreate(data) {
+      return isValidAllianceRegistrationBase(data)
+        && data.keys().hasOnly(['ticketCode', 'airlineName', 'applicantId', 'status', 'createdAt', 'updatedAt'])
+        && data.status == 'pending';
+    }
+
+    function isValidAllianceRegistrationAdminUpdate(data) {
+      return isValidAllianceRegistrationBase(data)
+        && data.keys().hasOnly(['ticketCode', 'airlineName', 'applicantId', 'status', 'adminNote', 'createdAt', 'updatedAt']);
+    }
+
+    // 4. Airlines of The Moon Submissions (Create: Verified Users; Read/Update/Delete: Strictly Admin Only)
+    match /moonEventSubmissions/{submissionId} {
+      allow get: if isValidId(submissionId) && isAdmin();
+      allow list: if isAdmin();
+      allow create: if isValidId(submissionId)
+        && isVerifiedUser()
+        && isValidMoonSubmissionCreate(incoming())
+        && incoming().submittedByUid == request.auth.uid
+        && incoming().submittedByEmail == request.auth.token.email
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(submissionId)
+        && isAdmin()
+        && isValidMoonSubmissionAdminUpdate(incoming())
+        && incoming().createdAt == existing().createdAt
+        && incoming().submittedByUid == existing().submittedByUid
+        && incoming().submittedByEmail == existing().submittedByEmail
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'airlineName',
+          'alliance',
+          'totalProfit',
+          'codeshareProfit',
+          'operatingProfit',
+          'revenue',
+          'operatingCost',
+          'profitPhotoDataUrl',
+          'airlinePhotoDataUrl',
+          'judgeStatus',
+          'adminScore',
+          'adminNote',
+          'updatedAt'
+        ]);
+      allow delete: if isValidId(submissionId) && isAdmin();
+    }
+
+    // 5. AOTM Announcement Live Chat (Public Read without PII; Verified Member Chat; Admin Text + Top 1-10 Photos)
+    match /aotmChatMessages/{msgId} {
+      allow get: if isValidId(msgId);
+      allow list: if true;
+      allow create: if isValidId(msgId)
+        && isVerifiedUser()
+        && isValidChatMessage(incoming())
+        && incoming().senderUid == request.auth.uid
+        && incoming().createdAt == request.time
+        && (
+          isAdmin() ||
+          (incoming().senderRole == 'member' && !('photoDataUrl' in incoming()) && !('rankLabel' in incoming()))
+        );
+      allow update: if false;
+      allow delete: if isValidId(msgId)
+        && isVerifiedUser()
+        && (isAdmin() || existing().senderUid == request.auth.uid);
+    }
+
+    // 6. AOTM Official Published Top 1-10 Winners (Public Read; Strictly Admin Write)
+    match /aotmWinners/{winnerId} {
+      allow get: if isValidId(winnerId);
+      allow list: if true;
+      allow create: if isValidId(winnerId)
+        && isAdmin()
+        && isValidAotmWinner(incoming())
+        && incoming().publishedAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(winnerId)
+        && isAdmin()
+        && isValidAotmWinner(incoming())
+        && incoming().publishedAt == existing().publishedAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'rank',
+          'airlineName',
+          'alliance',
+          'adminScore',
+          'judgeStatus',
+          'photoDataUrl',
+          'updatedAt'
+        ]);
+      allow delete: if isValidId(winnerId) && isAdmin();
+    }
+
+    // 7. Real Online Presence (Public Read without PII; Self-Write by Verified Users Only)
+    match /onlinePresence/{userId} {
+      allow get: if isValidId(userId);
+      allow list: if true;
+      allow create: if isValidId(userId)
+        && isVerifiedUser()
+        && userId == request.auth.uid
+        && isValidOnlinePresence(incoming())
+        && incoming().uid == request.auth.uid
+        && incoming().lastSeenAt == request.time
+        && (isAdmin() || incoming().role == 'member');
+      allow update: if isValidId(userId)
+        && isVerifiedUser()
+        && userId == request.auth.uid
+        && isValidOnlinePresence(incoming())
+        && incoming().uid == existing().uid
+        && incoming().lastSeenAt == request.time
+        && (isAdmin() || incoming().role == 'member')
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'displayName',
+          'role',
+          'avatarUrl',
+          'isOnline',
+          'lastSeenAt'
+        ]);
+      allow delete: if isValidId(userId)
+        && isVerifiedUser()
+        && (userId == request.auth.uid || isAdmin());
+    }
+
+    // 8. Admins RBAC Lookup (Strictly Protected)
+    match /admins/{userId} {
+      allow get: if isValidId(userId) && (isAdmin() || (isSignedIn() && request.auth.uid == userId));
+      allow list: if isAdmin();
+      allow create: if isValidId(userId)
+        && isAdmin()
+        && isValidAdminRecord(incoming())
+        && incoming().createdAt == request.time;
+      allow update: if isValidId(userId)
+        && isAdmin()
+        && isValidAdminRecord(incoming())
+        && incoming().createdAt == existing().createdAt
+        && incoming().diff(existing()).affectedKeys().hasOnly(['email', 'displayName']);
+      allow delete: if isValidId(userId) && isAdmin();
+    }
+
+    // 9. Alliance Followers (Public Read; Create & Delete by self or admin)
+    match /allianceFollowers/{followerId} {
+      allow get: if isValidId(followerId);
+      allow list: if true;
+      allow create: if isValidId(followerId)
+        && isValidAllianceFollower(incoming())
+        && incoming().followedAt == request.time
+        && (
+          (isSignedIn() && followerId == request.auth.uid) ||
+          followerId.matches('^guest_[a-zA-Z0-9]+$')
+        );
+      allow update: if false;
+      allow delete: if isValidId(followerId)
+        && (
+          isAdmin() ||
+          (isSignedIn() && followerId == request.auth.uid) ||
+          followerId.matches('^guest_[a-zA-Z0-9]+$')
+        );
+    }
+
+    // 10. Alliance Registrations (Create: any applicant; Get: public/applicant; List: Admin only; Update/Delete: strictly Admin)
+    match /allianceRegistrations/{registrationId} {
+      allow get: if isValidId(registrationId);
+      allow list: if isAdmin();
+      allow create: if isValidId(registrationId)
+        && isValidAllianceRegistrationCreate(incoming())
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(registrationId)
+        && isAdmin()
+        && isValidAllianceRegistrationAdminUpdate(incoming())
+        && incoming().createdAt == existing().createdAt
+        && incoming().ticketCode == existing().ticketCode
+        && incoming().applicantId == existing().applicantId
+        && incoming().airlineName == existing().airlineName
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'adminNote', 'updatedAt']);
+      allow delete: if isValidId(registrationId) && isAdmin();
+    }
+  }
+}

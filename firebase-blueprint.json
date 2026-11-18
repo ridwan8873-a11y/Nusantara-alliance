@@ -1,0 +1,228 @@
+{
+  "entities": {
+    "MoonEventSubmission": {
+      "title": "MoonEventSubmission",
+      "description": "Private participant submission for the Airlines of The Moon event (readable only by alliance admin)",
+      "type": "object",
+      "properties": {
+        "airlineName": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 100
+        },
+        "alliance": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 100
+        },
+        "totalProfit": { "type": "number" },
+        "codeshareProfit": { "type": "number" },
+        "operatingProfit": { "type": "number" },
+        "revenue": { "type": "number" },
+        "operatingCost": { "type": "number" },
+        "profitPhotoDataUrl": {
+          "type": "string",
+          "minLength": 30,
+          "maxLength": 350000
+        },
+        "airlinePhotoDataUrl": {
+          "type": "string",
+          "minLength": 30,
+          "maxLength": 350000
+        },
+        "submittedByUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "submittedByEmail": {
+          "type": "string",
+          "minLength": 5,
+          "maxLength": 160
+        },
+        "judgeStatus": {
+          "type": "string",
+          "enum": ["Menunggu", "Terverifikasi", "Juara 1", "Juara 2", "Juara 3", "Diskualifikasi"]
+        },
+        "adminScore": { "type": "number" },
+        "adminNote": { "type": "string", "maxLength": 500 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "airlineName",
+        "alliance",
+        "totalProfit",
+        "codeshareProfit",
+        "operatingProfit",
+        "revenue",
+        "operatingCost",
+        "profitPhotoDataUrl",
+        "airlinePhotoDataUrl",
+        "submittedByUid",
+        "submittedByEmail",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "AotmChatMessage": {
+      "title": "AotmChatMessage",
+      "description": "Live chat messages during the AOTM Winner Announcement night (no PII stored; admin can attach Top 1-10 photos)",
+      "type": "object",
+      "properties": {
+        "senderUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "senderName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "senderRole": {
+          "type": "string",
+          "enum": ["admin", "member"]
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "photoDataUrl": {
+          "type": "string",
+          "minLength": 30,
+          "maxLength": 350000
+        },
+        "rankLabel": {
+          "type": "string",
+          "enum": ["Top 1", "Top 2", "Top 3", "Top 4", "Top 5", "Top 6", "Top 7", "Top 8", "Top 9", "Top 10"]
+        },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["senderUid", "senderName", "senderRole", "text", "createdAt"]
+    },
+    "AotmWinner": {
+      "title": "AotmWinner",
+      "description": "Official published Top 1-10 winners for PENGUMUMAN PEMENANG AOTM NOVEMBER 2026 NUSANTARA ALLIANCE",
+      "type": "object",
+      "properties": {
+        "rank": { "type": "number" },
+        "airlineName": { "type": "string", "minLength": 2, "maxLength": 100 },
+        "alliance": { "type": "string", "minLength": 2, "maxLength": 100 },
+        "adminScore": { "type": "number" },
+        "judgeStatus": { "type": "string", "maxLength": 40 },
+        "photoDataUrl": { "type": "string", "minLength": 30, "maxLength": 350000 },
+        "publishedAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["rank", "airlineName", "alliance", "adminScore", "judgeStatus", "publishedAt", "updatedAt"]
+    },
+    "OnlinePresence": {
+      "title": "OnlinePresence",
+      "description": "Real-time active presence of verified signed-in users (zero PII stored)",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "role": {
+          "type": "string",
+          "enum": ["admin", "member"]
+        },
+        "avatarUrl": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 500
+        },
+        "isOnline": { "type": "boolean" },
+        "lastSeenAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "displayName", "role", "isOnline", "lastSeenAt"]
+    },
+    "AdminRecord": {
+      "title": "AdminRecord",
+      "description": "Authorized alliance administrators",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string", "minLength": 5, "maxLength": 160 },
+        "displayName": { "type": "string", "maxLength": 100 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["email", "createdAt"]
+    },
+    "AllianceFollower": {
+      "title": "AllianceFollower",
+      "description": "Public follower record of Akasha Alliance",
+      "type": "object",
+      "properties": {
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "avatarUrl": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 500
+        },
+        "followedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["displayName", "followedAt"]
+    },
+    "AllianceRegistration": {
+      "title": "AllianceRegistration",
+      "description": "Registration ticket for joining Akasha Alliance with live status tracking",
+      "type": "object",
+      "properties": {
+        "ticketCode": { "type": "string", "minLength": 4, "maxLength": 30 },
+        "airlineName": { "type": "string", "minLength": 2, "maxLength": 100 },
+        "applicantId": { "type": "string", "minLength": 4, "maxLength": 128 },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected"] },
+        "adminNote": { "type": "string", "maxLength": 300 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ticketCode", "airlineName", "applicantId", "status", "createdAt", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/moonEventSubmissions/{submissionId}": {
+      "schema": { "$ref": "#/entities/MoonEventSubmission" },
+      "description": "Submissions for Airlines of The Moon event — strictly readable only by admin"
+    },
+    "/aotmChatMessages/{msgId}": {
+      "schema": { "$ref": "#/entities/AotmChatMessage" },
+      "description": "Live event chat opened on announcement night from 20:00 WIB"
+    },
+    "/aotmWinners/{winnerId}": {
+      "schema": { "$ref": "#/entities/AotmWinner" },
+      "description": "Published Top 1-10 winners board for the official announcement"
+    },
+    "/onlinePresence/{userId}": {
+      "schema": { "$ref": "#/entities/OnlinePresence" },
+      "description": "Real-time heartbeat presence for signed-in verified visitors"
+    },
+    "/admins/{userId}": {
+      "schema": { "$ref": "#/entities/AdminRecord" },
+      "description": "Explicit admin RBAC lookup table"
+    },
+    "/allianceFollowers/{followerId}": {
+      "schema": { "$ref": "#/entities/AllianceFollower" },
+      "description": "Public follower record of Akasha Alliance"
+    },
+    "/allianceRegistrations/{registrationId}": {
+      "schema": { "$ref": "#/entities/AllianceRegistration" },
+      "description": "Live airline registration queue tickets"
+    }
+  }
+}
