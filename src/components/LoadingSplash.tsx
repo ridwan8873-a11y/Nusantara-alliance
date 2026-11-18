@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { LogIn, Plane } from 'lucide-react';
-import skyBackdropImg from '../assets/images/aotm_moonlight_sky_1794920814104.jpg';
+import runwayBackdropImg from '../assets/images/runway_bokeh_backdrop_1794999305269.jpg';
 import { MOON_EVENT_OPEN_DATE_LABEL } from '../types/moonEvent';
 import type { User } from 'firebase/auth';
 
@@ -51,19 +51,19 @@ export function LoadingSplash({
         exiting ? 'pointer-events-none opacity-0' : 'opacity-100'
       }`}
     >
-      {/* Subtle Atmospheric Backdrop */}
-      <div className="pointer-events-none absolute inset-0 z-0">
+      {/* Subtle Blurred Night Runway Backdrop */}
+      <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden">
         {!bgError && (
           <img
-            src={skyBackdropImg}
+            src={runwayBackdropImg}
             alt=""
             aria-hidden="true"
             referrerPolicy="no-referrer"
             onError={() => setBgError(true)}
-            className="h-full w-full object-cover object-center opacity-20"
+            className="h-full w-full scale-[1.03] object-cover object-center opacity-35 blur-[2px]"
           />
         )}
-        <div className="absolute inset-0 bg-gradient-to-b from-[#080E18]/80 via-[#080E18]/90 to-[#080E18]" />
+        <div className="absolute inset-0 bg-gradient-to-b from-[#080E18]/75 via-[#080E18]/85 to-[#080E18]" />
       </div>
 
       <div className="relative z-10 flex w-full max-w-md flex-col items-center text-center">

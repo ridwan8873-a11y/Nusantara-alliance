@@ -1,0 +1,18 @@
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+[[redirects]]
+  from = "/api/ai/evaluate-submission"
+  to = "/.netlify/functions/evaluate-submission"
+  status = 200
+
+[[redirects]]
+  from = "/api/ai/verify-submission-eval"
+  to = "/.netlify/functions/verify-submission-eval"
+  status = 200
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

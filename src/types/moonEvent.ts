@@ -33,6 +33,12 @@ export interface MoonEventSubmission {
   judgeStatus?: JudgeStatus;
   adminScore?: number;
   adminNote?: string;
+  aiScore?: number;
+  aiRecommendedStatus?: JudgeStatus;
+  aiPhotoMatchStatus?: 'Sesuai' | 'Perlu Cek Manual' | 'Tidak Sesuai';
+  aiTop1Eligible?: boolean;
+  aiSummaryNote?: string;
+  aiSignature?: string;
   createdAt: Timestamp | null;
   updatedAt: Timestamp | null;
 }
@@ -93,13 +99,13 @@ export const MOON_EVENT_LIMITS = {
 } as const;
 
 // Event schedule timestamps in WIB (UTC+7)
-export const MOON_EVENT_OPEN_ISO = '2026-11-28T00:00:00+07:00';
-export const MOON_EVENT_DEADLINE_ISO = '2026-11-29T00:00:00+07:00';
-export const MOON_EVENT_ANNOUNCEMENT_ISO = '2026-11-30T20:30:00+07:00';
+export const MOON_EVENT_OPEN_ISO = '2026-11-26T00:00:00+07:00';
+export const MOON_EVENT_DEADLINE_ISO = '2026-11-27T00:00:00+07:00';
+export const MOON_EVENT_ANNOUNCEMENT_ISO = '2026-11-28T19:00:00+07:00';
 
-export const MOON_EVENT_OPEN_DATE_LABEL = '28 November 2026';
-export const MOON_EVENT_DEADLINE_LABEL = '29 November 2026, jam 00.00 WIB';
-export const MOON_EVENT_ANNOUNCEMENT_LABEL = '30 November 2026, jam 20.30 WIB';
+export const MOON_EVENT_OPEN_DATE_LABEL = '26 November 2026';
+export const MOON_EVENT_DEADLINE_LABEL = '27 November 2026, jam 00.00 WIB';
+export const MOON_EVENT_ANNOUNCEMENT_LABEL = '28 November 2026, jam 19.00 WIB';
 
 export const AOTM_ANNOUNCEMENT_TITLE =
   'PENGUMUMAN PEMENANG AOTM NOVEMBER 2026 NUSANTARA ALLIANCE';

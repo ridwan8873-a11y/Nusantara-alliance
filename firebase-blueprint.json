@@ -47,6 +47,23 @@
         },
         "adminScore": { "type": "number" },
         "adminNote": { "type": "string", "maxLength": 500 },
+        "aiScore": { "type": "number" },
+        "aiRecommendedStatus": {
+          "type": "string",
+          "enum": ["Menunggu", "Terverifikasi", "Juara 1", "Juara 2", "Juara 3", "Diskualifikasi"]
+        },
+        "aiPhotoMatchStatus": {
+          "type": "string",
+          "enum": ["Sesuai", "Perlu Cek Manual", "Tidak Sesuai"]
+        },
+        "aiTop1Eligible": { "type": "boolean" },
+        "aiSummaryNote": { "type": "string", "maxLength": 500 },
+        "aiSignature": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 64,
+          "pattern": "^[a-f0-9]{64}$"
+        },
         "createdAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" }
       },

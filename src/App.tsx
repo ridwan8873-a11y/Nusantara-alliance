@@ -4,7 +4,7 @@ import {
   ExternalLink,
   ShieldCheck,
 } from 'lucide-react';
-import skyBackdropImg from './assets/images/aotm_moonlight_sky_1794920814104.jpg';
+import runwayBackdropImg from './assets/images/runway_bokeh_backdrop_1794999305269.jpg';
 import { AirlinesOfTheMoonSection } from './components/AirlinesOfTheMoonSection';
 import { LoadingSplash } from './components/LoadingSplash';
 import { Navbar } from './components/Navbar';
@@ -81,19 +81,19 @@ export default function App() {
         />
       )}
 
-      {/* Subtle Atmospheric Sky Backdrop */}
-      <div className="pointer-events-none fixed inset-0 z-0">
+      {/* Blurred Airport Runway Lights Backdrop */}
+      <div className="pointer-events-none fixed inset-0 z-0 overflow-hidden">
         {!bgError && (
           <img
-            src={skyBackdropImg}
+            src={runwayBackdropImg}
             alt=""
             aria-hidden="true"
             referrerPolicy="no-referrer"
             onError={() => setBgError(true)}
-            className="h-full w-full object-cover object-center opacity-25"
+            className="h-full w-full scale-[1.03] object-cover object-center opacity-50 blur-[2px]"
           />
         )}
-        <div className="absolute inset-0 bg-gradient-to-b from-[#080E18]/75 via-[#080E18]/90 to-[#080E18]" />
+        <div className="absolute inset-0 bg-gradient-to-b from-[#080E18]/65 via-[#080E18]/78 to-[#080E18]/92" />
       </div>
 
       <div className="relative z-10 flex min-h-screen flex-col justify-between">

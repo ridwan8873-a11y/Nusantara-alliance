@@ -68,8 +68,18 @@ service cloud.firestore {
         && data.updatedAt is timestamp;
     }
 
+    function isValidMoonSubmissionAiFields(data) {
+      return (!('aiScore' in data) || (data.aiScore is number && data.aiScore >= 0 && data.aiScore <= 100))
+        && (!('aiRecommendedStatus' in data) || (data.aiRecommendedStatus in ['Menunggu', 'Terverifikasi', 'Juara 1', 'Juara 2', 'Juara 3', 'Diskualifikasi']))
+        && (!('aiPhotoMatchStatus' in data) || (data.aiPhotoMatchStatus in ['Sesuai', 'Perlu Cek Manual', 'Tidak Sesuai']))
+        && (!('aiTop1Eligible' in data) || (data.aiTop1Eligible is bool))
+        && (!('aiSummaryNote' in data) || (data.aiSummaryNote is string && data.aiSummaryNote.size() <= 500))
+        && (!('aiSignature' in data) || (data.aiSignature is string && data.aiSignature.size() == 64 && data.aiSignature.matches('^[a-f0-9]{64}$')));
+    }
+
     function isValidMoonSubmissionCreate(data) {
       return isValidMoonSubmissionBase(data)
+        && isValidMoonSubmissionAiFields(data)
         && data.keys().hasOnly([
           'airlineName',
           'alliance',
@@ -82,6 +92,12 @@ service cloud.firestore {
           'airlinePhotoDataUrl',
           'submittedByUid',
           'submittedByEmail',
+          'aiScore',
+          'aiRecommendedStatus',
+          'aiPhotoMatchStatus',
+          'aiTop1Eligible',
+          'aiSummaryNote',
+          'aiSignature',
           'createdAt',
           'updatedAt'
         ]);
@@ -89,6 +105,7 @@ service cloud.firestore {
 
     function isValidMoonSubmissionAdminUpdate(data) {
       return isValidMoonSubmissionBase(data)
+        && isValidMoonSubmissionAiFields(data)
         && data.keys().hasOnly([
           'airlineName',
           'alliance',
@@ -101,6 +118,12 @@ service cloud.firestore {
           'airlinePhotoDataUrl',
           'submittedByUid',
           'submittedByEmail',
+          'aiScore',
+          'aiRecommendedStatus',
+          'aiPhotoMatchStatus',
+          'aiTop1Eligible',
+          'aiSummaryNote',
+          'aiSignature',
           'judgeStatus',
           'adminScore',
           'adminNote',

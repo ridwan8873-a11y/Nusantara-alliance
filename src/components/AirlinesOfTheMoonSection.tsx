@@ -105,9 +105,9 @@ const ADMIN_PHASE_OPTIONS: Array<{
   label: string;
 }> = [
   { value: 'auto', label: 'Sesuai Jadwal' },
-  { value: 'submission_open', label: 'Pengumpulan (28 Nov)' },
-  { value: 'judging', label: 'Penilaian (29–30 Nov)' },
-  { value: 'announcement', label: 'Pengumuman (30 Nov 20:30)' },
+  { value: 'submission_open', label: 'Pengumpulan (26 Nov)' },
+  { value: 'judging', label: 'Penilaian (27–28 Nov)' },
+  { value: 'announcement', label: 'Pengumuman (28 Nov 19:00)' },
 ];
 
 export function AirlinesOfTheMoonSection({
@@ -284,6 +284,27 @@ export function AirlinesOfTheMoonSection({
               typeof data.adminScore === 'number' ? data.adminScore : undefined,
             adminNote:
               typeof data.adminNote === 'string' ? data.adminNote : undefined,
+            aiScore: typeof data.aiScore === 'number' ? data.aiScore : undefined,
+            aiRecommendedStatus: data.aiRecommendedStatus as
+              | JudgeStatus
+              | undefined,
+            aiPhotoMatchStatus: data.aiPhotoMatchStatus as
+              | 'Sesuai'
+              | 'Perlu Cek Manual'
+              | 'Tidak Sesuai'
+              | undefined,
+            aiTop1Eligible:
+              typeof data.aiTop1Eligible === 'boolean'
+                ? data.aiTop1Eligible
+                : undefined,
+            aiSummaryNote:
+              typeof data.aiSummaryNote === 'string'
+                ? data.aiSummaryNote
+                : undefined,
+            aiSignature:
+              typeof data.aiSignature === 'string'
+                ? data.aiSignature
+                : undefined,
             createdAt: data.createdAt ?? null,
             updatedAt: data.updatedAt ?? null,
           };
@@ -453,6 +474,84 @@ export function AirlinesOfTheMoonSection({
 
     setSubmitting(true);
     try {
+      // Automatically run server-side AI evaluation at submission time (works even when Admin is offline)
+      let aiFields: Record<string, unknown> = {};
+      try {
+        const controller = new AbortController();
+        const timeoutId = window.setTimeout(() => controller.abort(), 16000);
+        const aiRes = await fetch('/api/ai/evaluate-submission', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          signal: controller.signal,
+          body: JSON.stringify({
+            airlineName: trimmedAirline,
+            alliance: trimmedAlliance,
+            totalProfit: parsedTotalProfit,
+            codeshareProfit: parsedCodeshareProfit,
+            operatingProfit: parsedOperatingProfit,
+            revenue: parsedRevenue,
+            operatingCost: parsedOperatingCost,
+            profitPhotoDataUrl: profitPhoto.dataUrl,
+            airlinePhotoDataUrl: airlinePhoto.dataUrl,
+          }),
+        });
+        window.clearTimeout(timeoutId);
+
+        const contentType = aiRes.headers.get('content-type') || '';
+        if (aiRes.ok && contentType.includes('application/json')) {
+          const aiJson = (await aiRes.json()) as {
+            score?: unknown;
+            recommendedStatus?: unknown;
+            photoMatchStatus?: unknown;
+            top1Eligible?: unknown;
+            summaryNote?: unknown;
+            aiSignature?: unknown;
+          };
+          const validStatuses = [
+            'Menunggu',
+            'Terverifikasi',
+            'Juara 1',
+            'Juara 2',
+            'Juara 3',
+            'Diskualifikasi',
+          ];
+          const validPhotoStatuses = [
+            'Sesuai',
+            'Perlu Cek Manual',
+            'Tidak Sesuai',
+          ];
+          const rawScore = Number(aiJson.score);
+          const rawRec = String(aiJson.recommendedStatus || '');
+          const rawPhoto = String(aiJson.photoMatchStatus || '');
+          const rawSig = String(aiJson.aiSignature || '').trim();
+          const rawNote = String(aiJson.summaryNote || '').slice(
+            0,
+            MOON_EVENT_LIMITS.adminNoteMax
+          );
+
+          if (
+            Number.isFinite(rawScore) &&
+            rawScore >= MOON_EVENT_LIMITS.adminScoreMin &&
+            rawScore <= MOON_EVENT_LIMITS.adminScoreMax &&
+            validStatuses.includes(rawRec) &&
+            validPhotoStatuses.includes(rawPhoto) &&
+            /^[a-f0-9]{64}$/.test(rawSig)
+          ) {
+            aiFields = {
+              aiScore: Math.round(rawScore * 100) / 100,
+              aiRecommendedStatus: rawRec,
+              aiPhotoMatchStatus: rawPhoto,
+              aiTop1Eligible: aiJson.top1Eligible === true,
+              aiSummaryNote: rawNote,
+              aiSignature: rawSig,
+            };
+          }
+        }
+      } catch {
+        // Never block participant submission if AI endpoint is busy or unavailable
+        aiFields = {};
+      }
+
       await setDoc(doc(db, 'moonEventSubmissions', submissionId), {
         airlineName: trimmedAirline,
         alliance: trimmedAlliance,
@@ -465,6 +564,7 @@ export function AirlinesOfTheMoonSection({
         airlinePhotoDataUrl: airlinePhoto.dataUrl,
         submittedByUid: user.uid,
         submittedByEmail: user.email,
+        ...aiFields,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
@@ -535,7 +635,7 @@ export function AirlinesOfTheMoonSection({
         };
       case 'judging':
         return {
-          title: 'Hitung Mundur Pengumuman Pemenang (20.30 WIB)',
+          title: 'Hitung Mundur Pengumuman Pemenang (19.00 WIB)',
           parts: computeCountdownTo(MOON_EVENT_ANNOUNCEMENT_ISO, nowMs),
         };
       case 'announcement':
@@ -595,11 +695,11 @@ export function AirlinesOfTheMoonSection({
     if (submittedEmailList.length === 0) {
       return [
         {
-          email: 'Formulir dibuka 28 Nov 2026',
+          email: 'Formulir dibuka 26 Nov 2026',
           status: 'Akun yang telah mengisi AOTM akan berjalan di sini',
         },
         {
-          email: 'Formulir dibuka 28 Nov 2026',
+          email: 'Formulir dibuka 26 Nov 2026',
           status: 'Akun yang telah mengisi AOTM akan berjalan di sini',
         },
       ];
@@ -657,7 +757,7 @@ export function AirlinesOfTheMoonSection({
         </div>
       )}
 
-      {/* PHASE 5 (30 Nov 2026, 20:30 WIB+): Official Replacement Announcement */}
+      {/* PHASE 5 (28 Nov 2026, 19:00 WIB+): Official Replacement Announcement */}
       {isAnnouncementActive ? (
         <AotmWinnerAnnouncement active={isAnnouncementActive} />
       ) : (
@@ -668,7 +768,7 @@ export function AirlinesOfTheMoonSection({
             <div className="grid grid-cols-1 gap-8 border-b border-white/10 pb-8 lg:grid-cols-12 lg:items-end">
               <div className="lg:col-span-7">
                 <p className="text-xs font-medium text-[#D4AF37]">
-                  Kompetisi Resmi Nusantara Alliance · 28–30 November 2026
+                  Kompetisi Resmi Nusantara Alliance · 26–28 November 2026
                 </p>
 
                 <h1
@@ -749,25 +849,25 @@ export function AirlinesOfTheMoonSection({
                     <div className="flex items-center justify-between gap-4 py-2.5">
                       <span className="text-slate-600 font-medium">Pembukaan</span>
                       <span className="font-mono font-semibold text-slate-900 tabular-nums">
-                        28 Nov 2026 · 00.00 WIB
+                        26 Nov 2026 · 00.00 WIB
                       </span>
                     </div>
                     <div className="flex items-center justify-between gap-4 py-2.5">
                       <span className="text-slate-600 font-medium">Batas Pengumpulan</span>
                       <span className="font-mono font-semibold text-[#B45309] tabular-nums">
-                        29 Nov 2026 · 00.00 WIB
+                        27 Nov 2026 · 00.00 WIB
                       </span>
                     </div>
                     <div className="flex items-center justify-between gap-4 py-2.5">
                       <span className="text-slate-600 font-medium">Penilaian Dewan Juri</span>
                       <span className="font-mono font-semibold text-slate-900 tabular-nums">
-                        29–30 Nov 2026
+                        27–28 Nov 2026
                       </span>
                     </div>
                     <div className="flex items-center justify-between gap-4 py-2.5">
                       <span className="text-slate-600 font-medium">Pengumuman Juara</span>
                       <span className="font-mono font-semibold text-slate-900 tabular-nums">
-                        30 Nov 2026 · 20.30 WIB
+                        28 Nov 2026 · 19.00 WIB
                       </span>
                     </div>
                   </div>
@@ -1463,6 +1563,7 @@ export function AirlinesOfTheMoonSection({
           submissions={submissions}
           loading={loadingSubmissions}
           adminError={adminError}
+          activePhase={activePhase}
           onError={setAdminError}
         />
       )}

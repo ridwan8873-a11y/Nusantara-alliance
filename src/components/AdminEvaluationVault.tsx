@@ -1,4 +1,4 @@
-import { FormEvent, useMemo, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   collection,
   deleteDoc,
@@ -36,6 +36,7 @@ import {
 import {
   JUDGE_STATUS_OPTIONS,
   MOON_EVENT_LIMITS,
+  type AotmEventPhase,
   type JudgeStatus,
   type MoonEventSubmission,
 } from '../types/moonEvent';
@@ -45,6 +46,7 @@ interface AdminEvaluationVaultProps {
   submissions: MoonEventSubmission[];
   loading: boolean;
   adminError: string;
+  activePhase: AotmEventPhase;
   onError: (msg: string) => void;
 }
 
@@ -75,6 +77,21 @@ function isAlreadyEvaluated(item: MoonEventSubmission): boolean {
   );
 }
 
+function mapAiToJudgeStatus(
+  recommendedStatus?: JudgeStatus,
+  photoMatchStatus?: string
+): JudgeStatus {
+  if (recommendedStatus === 'Diskualifikasi') return 'Diskualifikasi';
+  if (
+    photoMatchStatus === 'Tidak Sesuai' ||
+    photoMatchStatus === 'Perlu Cek Manual' ||
+    recommendedStatus === 'Menunggu'
+  ) {
+    return 'Menunggu';
+  }
+  return 'Terverifikasi';
+}
+
 function formatMetric(val: number): string {
   return new Intl.NumberFormat('id-ID', {
     maximumFractionDigits: 2,
@@ -84,6 +101,49 @@ function formatMetric(val: number): string {
 function calcMarginPct(item: MoonEventSubmission): number {
   if (!item.revenue || item.revenue <= 0) return 0;
   return (item.operatingProfit / item.revenue) * 100;
+}
+
+function computeExpectedPodiumUpdates(
+  itemsSnapshot: MoonEventSubmission[]
+): Array<{ item: MoonEventSubmission; nextStatus: JudgeStatus }> {
+  const scoredValid = itemsSnapshot
+    .filter(
+      (item) =>
+        item.judgeStatus !== 'Diskualifikasi' &&
+        item.judgeStatus !== 'Menunggu' &&
+        typeof item.adminScore === 'number'
+    )
+    .sort((a, b) => {
+      if ((b.adminScore ?? 0) !== (a.adminScore ?? 0)) {
+        return (b.adminScore ?? 0) - (a.adminScore ?? 0);
+      }
+      if (b.totalProfit !== a.totalProfit) {
+        return b.totalProfit - a.totalProfit;
+      }
+      const bMargin = calcMarginPct(b);
+      const aMargin = calcMarginPct(a);
+      if (bMargin !== aMargin) {
+        return bMargin - aMargin;
+      }
+      return b.operatingProfit - a.operatingProfit;
+    });
+
+  const updates: Array<{ item: MoonEventSubmission; nextStatus: JudgeStatus }> = [];
+  for (let idx = 0; idx < scoredValid.length; idx += 1) {
+    const item = scoredValid[idx];
+    const nextStatus: JudgeStatus =
+      idx === 0
+        ? 'Juara 1'
+        : idx === 1
+          ? 'Juara 2'
+          : idx === 2
+            ? 'Juara 3'
+            : 'Terverifikasi';
+    if (item.judgeStatus !== nextStatus) {
+      updates.push({ item, nextStatus });
+    }
+  }
+  return updates;
 }
 
 function getStatusTextClass(status?: JudgeStatus): string {
@@ -105,6 +165,7 @@ export function AdminEvaluationVault({
   submissions,
   loading,
   adminError,
+  activePhase,
   onError,
 }: AdminEvaluationVaultProps) {
   const [activeTab, setActiveTab] = useState<AdminTab>('list');
@@ -153,6 +214,30 @@ export function AdminEvaluationVault({
   const [aiBatchDoneMsg, setAiBatchDoneMsg] = useState('');
   const [publishingWinners, setPublishingWinners] = useState(false);
   const [publishDoneMsg, setPublishDoneMsg] = useState('');
+
+  // Autonomous Offline AI Auto-Pilot state
+  const [autoPilotEnabled, setAutoPilotEnabled] = useState<boolean>(() => {
+    try {
+      const saved = window.localStorage.getItem('aotm_autopilot_ai_v1');
+      return saved === null ? true : saved === '1';
+    } catch {
+      return true;
+    }
+  });
+  const [autoPublishAtAnnouncement, setAutoPublishAtAnnouncement] =
+    useState<boolean>(() => {
+      try {
+        const saved = window.localStorage.getItem('aotm_autopublish_v1');
+        return saved === null ? true : saved === '1';
+      } catch {
+        return true;
+      }
+    });
+  const [autoPilotRunning, setAutoPilotRunning] = useState(false);
+  const [autoPilotInfo, setAutoPilotInfo] = useState('');
+  const autoPilotBusyRef = useRef(false);
+  const autoAttemptedIdsRef = useRef<Set<string>>(new Set());
+  const lastPublishedDigestRef = useRef<string>('');
 
   const sortedAndFiltered = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -253,6 +338,67 @@ export function AdminEvaluationVault({
     return { verifiedCount, topProfitItem, totalRevenueSum };
   }, [submissions]);
 
+  const topOneRecommendation = useMemo(() => {
+    if (submissions.length === 0) return null;
+
+    const nonDisqualified = submissions.filter(
+      (s) => s.judgeStatus !== 'Diskualifikasi'
+    );
+    if (nonDisqualified.length === 0) return null;
+
+    const verifiedOnly = nonDisqualified.filter(
+      (s) => s.judgeStatus !== 'Menunggu' && s.judgeStatus !== undefined
+    );
+    const pool = verifiedOnly.length > 0 ? verifiedOnly : nonDisqualified;
+
+    const scoredPool = [...pool].sort((a, b) => {
+      const aHasScore = typeof a.adminScore === 'number';
+      const bHasScore = typeof b.adminScore === 'number';
+      if (aHasScore !== bHasScore) return bHasScore ? 1 : -1;
+      if (aHasScore && bHasScore && b.adminScore !== a.adminScore) {
+        return (b.adminScore ?? 0) - (a.adminScore ?? 0);
+      }
+      if (b.totalProfit !== a.totalProfit) {
+        return b.totalProfit - a.totalProfit;
+      }
+      const bMargin = calcMarginPct(b);
+      const aMargin = calcMarginPct(a);
+      if (bMargin !== aMargin) return bMargin - aMargin;
+      return b.operatingProfit - a.operatingProfit;
+    });
+
+    const candidate = scoredPool[0];
+    if (!candidate) return null;
+
+    const hasValidFiveMetrics =
+      Number.isFinite(candidate.totalProfit) &&
+      Number.isFinite(candidate.codeshareProfit) &&
+      Number.isFinite(candidate.operatingProfit) &&
+      Number.isFinite(candidate.revenue) &&
+      candidate.revenue >= 0 &&
+      Number.isFinite(candidate.operatingCost) &&
+      candidate.operatingCost >= 0;
+
+    const hasBothPhotos =
+      Boolean(candidate.profitPhotoDataUrl) &&
+      Boolean(candidate.airlinePhotoDataUrl);
+
+    const isVerifiedClean =
+      candidate.judgeStatus === 'Juara 1' ||
+      candidate.judgeStatus === 'Terverifikasi' ||
+      candidate.judgeStatus === 'Juara 2' ||
+      candidate.judgeStatus === 'Juara 3';
+
+    return {
+      candidate,
+      marginPct: calcMarginPct(candidate),
+      hasValidFiveMetrics,
+      hasBothPhotos,
+      isVerifiedClean,
+      aiEvaluated: isAlreadyEvaluated(candidate),
+    };
+  }, [submissions]);
+
   const compareLeft = useMemo(() => {
     return (
       submissions.find((s) => s.id === compareLeftId) ||
@@ -282,37 +428,10 @@ export function AdminEvaluationVault({
     setAiSingleFeedback(null);
   };
 
-  const syncPodiumStandings = async (
-    itemsSnapshot: MoonEventSubmission[]
-  ): Promise<void> => {
-    const scoredValid = itemsSnapshot
-      .filter(
-        (item) =>
-          item.judgeStatus !== 'Diskualifikasi' &&
-          typeof item.adminScore === 'number'
-      )
-      .sort((a, b) => {
-        if ((b.adminScore ?? 0) !== (a.adminScore ?? 0)) {
-          return (b.adminScore ?? 0) - (a.adminScore ?? 0);
-        }
-        if (b.totalProfit !== a.totalProfit) {
-          return b.totalProfit - a.totalProfit;
-        }
-        return b.operatingProfit - a.operatingProfit;
-      });
-
-    for (let idx = 0; idx < scoredValid.length; idx += 1) {
-      const item = scoredValid[idx];
-      const nextStatus: JudgeStatus =
-        idx === 0
-          ? 'Juara 1'
-          : idx === 1
-            ? 'Juara 2'
-            : idx === 2
-              ? 'Juara 3'
-              : 'Terverifikasi';
-
-      if (item.judgeStatus !== nextStatus) {
+  const syncPodiumStandings = useCallback(
+    async (itemsSnapshot: MoonEventSubmission[]): Promise<void> => {
+      const updates = computeExpectedPodiumUpdates(itemsSnapshot);
+      for (const { item, nextStatus } of updates) {
         const docPath = `moonEventSubmissions/${item.id}`;
         try {
           await updateDoc(doc(db, 'moonEventSubmissions', item.id), {
@@ -324,8 +443,9 @@ export function AdminEvaluationVault({
           handleFirestoreError(err, OperationType.UPDATE, docPath);
         }
       }
-    }
-  };
+    },
+    [onError]
+  );
 
   const handleSaveEvaluation = async (e: FormEvent) => {
     e.preventDefault();
@@ -424,17 +544,45 @@ export function AdminEvaluationVault({
     }
   };
 
+  const buildPeerStats = (item: MoonEventSubmission) => {
+    const byProfit = [...submissions].sort(
+      (a, b) => b.totalProfit - a.totalProfit
+    );
+    const byOpProfit = [...submissions].sort(
+      (a, b) => b.operatingProfit - a.operatingProfit
+    );
+    const byMargin = [...submissions].sort(
+      (a, b) => calcMarginPct(b) - calcMarginPct(a)
+    );
+
+    const profitRankIdx = byProfit.findIndex((s) => s.id === item.id);
+    const marginRankIdx = byMargin.findIndex((s) => s.id === item.id);
+
+    return {
+      totalParticipants: submissions.length,
+      maxTotalProfit: byProfit[0]?.totalProfit ?? item.totalProfit,
+      maxOperatingProfit: byOpProfit[0]?.operatingProfit ?? item.operatingProfit,
+      maxMarginPct: byMargin[0] ? calcMarginPct(byMargin[0]) : calcMarginPct(item),
+      rankByTotalProfit: profitRankIdx >= 0 ? profitRankIdx + 1 : 1,
+      rankByMargin: marginRankIdx >= 0 ? marginRankIdx + 1 : 1,
+    };
+  };
+
   const requestAiEvaluation = async (
     item: MoonEventSubmission,
     peerStats: {
       totalParticipants: number;
       maxTotalProfit: number;
+      maxOperatingProfit: number;
+      maxMarginPct: number;
       rankByTotalProfit: number;
+      rankByMargin: number;
     }
   ): Promise<{
     score: number;
     recommendedStatus: JudgeStatus;
     photoMatchStatus: string;
+    top1Eligible: boolean;
     summaryNote: string;
   }> => {
     const response = await fetch('/api/ai/evaluate-submission', {
@@ -453,6 +601,14 @@ export function AdminEvaluationVault({
         peerStats,
       }),
     });
+
+    const contentType = response.headers.get('content-type') || '';
+    if (!contentType.includes('application/json')) {
+      throw new Error(
+        'Endpoint AI tidak merespons JSON. Jika membuka dari Netlify, pastikan GEMINI_API_KEY sudah dipasang di Netlify Environment Variables, atau jalankan penilaian AI melalui URL AI Studio.'
+      );
+    }
+
     const data = await response.json();
     if (!response.ok) {
       throw new Error(
@@ -465,6 +621,7 @@ export function AdminEvaluationVault({
         ? data.recommendedStatus
         : 'Terverifikasi') as JudgeStatus,
       photoMatchStatus: String(data.photoMatchStatus || 'Perlu Cek Manual'),
+      top1Eligible: data.top1Eligible === true,
       summaryNote: String(data.summaryNote || '').slice(
         0,
         MOON_EVENT_LIMITS.adminNoteMax
@@ -479,18 +636,10 @@ export function AdminEvaluationVault({
     onError('');
 
     try {
-      const byProfit = [...submissions].sort(
-        (a, b) => b.totalProfit - a.totalProfit
+      const result = await requestAiEvaluation(
+        selectedSubmission,
+        buildPeerStats(selectedSubmission)
       );
-      const rankIdx = byProfit.findIndex((s) => s.id === selectedSubmission.id);
-      const maxTotalProfit =
-        byProfit.length > 0 ? byProfit[0].totalProfit : selectedSubmission.totalProfit;
-
-      const result = await requestAiEvaluation(selectedSubmission, {
-        totalParticipants: submissions.length,
-        maxTotalProfit,
-        rankByTotalProfit: rankIdx >= 0 ? rankIdx + 1 : 1,
-      });
 
       setEditScore(String(result.score));
       setEditStatus(result.recommendedStatus);
@@ -511,25 +660,79 @@ export function AdminEvaluationVault({
     }
   };
 
+  const verifySignedAiPreEvaluations = useCallback(
+    async (
+      candidates: MoonEventSubmission[]
+    ): Promise<{ verifiedSet: Set<string>; failed: boolean }> => {
+      const withSig = candidates.filter(
+        (c) =>
+          typeof c.aiScore === 'number' &&
+          typeof c.aiSignature === 'string' &&
+          /^[a-f0-9]{64}$/.test(c.aiSignature)
+      );
+      if (withSig.length === 0) {
+        return { verifiedSet: new Set<string>(), failed: false };
+      }
+
+      try {
+        const res = await fetch('/api/ai/verify-submission-eval', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            items: withSig.map((c) => ({
+              id: c.id,
+              airlineName: c.airlineName,
+              alliance: c.alliance,
+              totalProfit: c.totalProfit,
+              codeshareProfit: c.codeshareProfit,
+              operatingProfit: c.operatingProfit,
+              revenue: c.revenue,
+              operatingCost: c.operatingCost,
+              aiScore: c.aiScore,
+              aiRecommendedStatus: c.aiRecommendedStatus,
+              aiPhotoMatchStatus: c.aiPhotoMatchStatus,
+              aiTop1Eligible: c.aiTop1Eligible,
+              aiSummaryNote: c.aiSummaryNote,
+              aiSignature: c.aiSignature,
+            })),
+          }),
+        });
+        const contentType = res.headers.get('content-type') || '';
+        if (!res.ok || !contentType.includes('application/json')) {
+          return { verifiedSet: new Set<string>(), failed: true };
+        }
+        const data = (await res.json()) as { verifiedIds?: unknown };
+        const verifiedIds = Array.isArray(data.verifiedIds)
+          ? data.verifiedIds.map(String)
+          : [];
+        return { verifiedSet: new Set(verifiedIds), failed: false };
+      } catch {
+        return { verifiedSet: new Set<string>(), failed: true };
+      }
+    },
+    []
+  );
+
   const handleAiBatchEvaluate = async () => {
     if (submissions.length === 0 || aiBatchProgress) return;
     onError('');
     setAiBatchDoneMsg('');
+    autoAttemptedIdsRef.current.clear();
 
     const byProfit = [...submissions].sort(
       (a, b) => b.totalProfit - a.totalProfit
     );
-    const maxTotalProfit = byProfit[0]?.totalProfit ?? 0;
 
     // Skip any airline that has already been graded/scored
     const unjudgedItems = byProfit.filter((item) => !isAlreadyEvaluated(item));
 
     if (unjudgedItems.length === 0) {
       await syncPodiumStandings(submissions);
+      setSortBy('adminScore');
       setAiBatchDoneMsg(
-        'Semua maskapai sudah memiliki nilai (tidak dinilai ulang). Klasemen sudah disesuaikan berdasarkan poin akhir.'
+        'Semua maskapai sudah memiliki nilai. Peringkat Juara 1–3 sudah disesuaikan otomatis berdasarkan poin akhir & 3 kriteria juri.'
       );
-      window.setTimeout(() => setAiBatchDoneMsg(''), 5000);
+      window.setTimeout(() => setAiBatchDoneMsg(''), 6000);
       return;
     }
 
@@ -537,64 +740,121 @@ export function AdminEvaluationVault({
       submissions.map((s) => [s.id, s])
     );
 
+    let successCount = 0;
+    let failedCount = 0;
+    let firstErrorMsg = '';
+
     try {
-      for (let i = 0; i < unjudgedItems.length; i += 1) {
-        const item = unjudgedItems[i];
-        const profitRank = byProfit.findIndex((p) => p.id === item.id) + 1;
+      // First promote any pre-evaluated submissions that already have valid server HMAC signatures
+      const { verifiedSet } = await verifySignedAiPreEvaluations(unjudgedItems);
+      const remainingForAi: MoonEventSubmission[] = [];
+
+      for (const item of unjudgedItems) {
+        if (verifiedSet.has(item.id) && typeof item.aiScore === 'number') {
+          const initialStatus = mapAiToJudgeStatus(
+            item.aiRecommendedStatus,
+            item.aiPhotoMatchStatus
+          );
+          const note = (item.aiSummaryNote || '').slice(
+            0,
+            MOON_EVENT_LIMITS.adminNoteMax
+          );
+          const docPath = `moonEventSubmissions/${item.id}`;
+          try {
+            await updateDoc(doc(db, 'moonEventSubmissions', item.id), {
+              judgeStatus: initialStatus,
+              adminScore: item.aiScore,
+              adminNote: note,
+              updatedAt: serverTimestamp(),
+            });
+            updatedMap.set(item.id, {
+              ...item,
+              judgeStatus: initialStatus,
+              adminScore: item.aiScore,
+              adminNote: note,
+            });
+            successCount += 1;
+          } catch (err) {
+            onError('Gagal menyimpan hasil pra-evaluasi AI ke database.');
+            handleFirestoreError(err, OperationType.UPDATE, docPath);
+          }
+        } else {
+          remainingForAi.push(item);
+        }
+      }
+
+      for (let i = 0; i < remainingForAi.length; i += 1) {
+        const item = remainingForAi[i];
 
         setAiBatchProgress({
           current: i + 1,
-          total: unjudgedItems.length,
+          total: remainingForAi.length,
           airlineName: item.airlineName,
         });
 
-        const result = await requestAiEvaluation(item, {
-          totalParticipants: byProfit.length,
-          maxTotalProfit,
-          rankByTotalProfit: profitRank > 0 ? profitRank : 1,
-        });
-
-        const initialStatus: JudgeStatus =
-          result.recommendedStatus === 'Diskualifikasi' ||
-          result.photoMatchStatus === 'Tidak Sesuai'
-            ? result.recommendedStatus === 'Diskualifikasi'
-              ? 'Diskualifikasi'
-              : 'Menunggu'
-            : 'Terverifikasi';
-
-        const docPath = `moonEventSubmissions/${item.id}`;
         try {
-          await updateDoc(doc(db, 'moonEventSubmissions', item.id), {
+          const result = await requestAiEvaluation(item, buildPeerStats(item));
+          const initialStatus = mapAiToJudgeStatus(
+            result.recommendedStatus,
+            result.photoMatchStatus
+          );
+
+          const docPath = `moonEventSubmissions/${item.id}`;
+          try {
+            await updateDoc(doc(db, 'moonEventSubmissions', item.id), {
+              judgeStatus: initialStatus,
+              adminScore: result.score,
+              adminNote: result.summaryNote,
+              updatedAt: serverTimestamp(),
+            });
+          } catch (err) {
+            onError('Gagal menyimpan hasil penilaian AI ke database.');
+            handleFirestoreError(err, OperationType.UPDATE, docPath);
+          }
+
+          updatedMap.set(item.id, {
+            ...item,
             judgeStatus: initialStatus,
             adminScore: result.score,
             adminNote: result.summaryNote,
-            updatedAt: serverTimestamp(),
           });
-        } catch (err) {
-          onError('Gagal menyimpan hasil penilaian AI ke database.');
-          handleFirestoreError(err, OperationType.UPDATE, docPath);
+          successCount += 1;
+        } catch (itemErr) {
+          failedCount += 1;
+          if (!firstErrorMsg) {
+            firstErrorMsg =
+              itemErr instanceof Error
+                ? itemErr.message
+                : 'Gagal menilai salah satu maskapai.';
+          }
+          if (
+            firstErrorMsg.includes('GEMINI_API_KEY') ||
+            firstErrorMsg.includes('Endpoint AI')
+          ) {
+            throw new Error(firstErrorMsg);
+          }
         }
 
-        updatedMap.set(item.id, {
-          ...item,
-          judgeStatus: initialStatus,
-          adminScore: result.score,
-          adminNote: result.summaryNote,
-        });
-
-        if (i < unjudgedItems.length - 1) {
+        if (i < remainingForAi.length - 1) {
           await new Promise((r) => setTimeout(r, 350));
         }
       }
 
-      // Adjust klasemen & Juara 1-3 across ALL scored entries (preserving existing scores untouched)
-      await syncPodiumStandings(Array.from(updatedMap.values()));
+      if (successCount > 0) {
+        await syncPodiumStandings(Array.from(updatedMap.values()));
+        setSortBy('adminScore');
+      }
 
-      setSortBy('adminScore');
-      setAiBatchDoneMsg(
-        `${unjudgedItems.length} maskapai baru selesai dinilai AI. Maskapai yang sudah dinilai sebelumnya tidak diubah, dan klasemen sudah disesuaikan dengan poin akhir.`
-      );
-      window.setTimeout(() => setAiBatchDoneMsg(''), 6000);
+      if (failedCount > 0) {
+        onError(
+          `${successCount} maskapai dinilai, ${failedCount} gagal (${firstErrorMsg}).`
+        );
+      } else {
+        setAiBatchDoneMsg(
+          `${successCount} maskapai selesai dinilai AI & langsung diurutkan otomatis sesuai poin akhir.`
+        );
+        window.setTimeout(() => setAiBatchDoneMsg(''), 7000);
+      }
     } catch (err) {
       onError(
         err instanceof Error
@@ -606,7 +866,7 @@ export function AdminEvaluationVault({
     }
   };
 
-  const handlePublishTopTenWinners = async () => {
+  const handlePublishTopTenWinners = useCallback(async () => {
     if (submissions.length === 0 || publishingWinners) return;
     onError('');
     setPublishDoneMsg('');
@@ -616,6 +876,10 @@ export function AdminEvaluationVault({
       const sortedTopTen = [...submissions]
         .filter((item) => item.judgeStatus !== 'Diskualifikasi')
         .sort((a, b) => {
+          const aVerified = Boolean(a.judgeStatus && a.judgeStatus !== 'Menunggu');
+          const bVerified = Boolean(b.judgeStatus && b.judgeStatus !== 'Menunggu');
+          if (aVerified !== bVerified) return bVerified ? 1 : -1;
+
           const aHasScore = typeof a.adminScore === 'number';
           const bHasScore = typeof b.adminScore === 'number';
           if (aHasScore !== bHasScore) return bHasScore ? 1 : -1;
@@ -624,6 +888,11 @@ export function AdminEvaluationVault({
           }
           if (b.totalProfit !== a.totalProfit) {
             return b.totalProfit - a.totalProfit;
+          }
+          const bMargin = calcMarginPct(b);
+          const aMargin = calcMarginPct(a);
+          if (bMargin !== aMargin) {
+            return bMargin - aMargin;
           }
           return b.operatingProfit - a.operatingProfit;
         })
@@ -731,7 +1000,220 @@ export function AdminEvaluationVault({
     } finally {
       setPublishingWinners(false);
     }
+  }, [submissions, publishingWinners, onError]);
+
+  // Autonomous Auto-Pilot AI Effect:
+  // 1) Instantly verifies & promotes AI pre-evaluations submitted while admin was offline
+  // 2) Automatically calls Gemini AI for any unevaluated entries
+  // 3) Automatically sorts & assigns Juara 1-3 + Terverifikasi by points
+  // 4) Optionally auto-publishes Top 1-10 once event hits announcement phase
+  useEffect(() => {
+    if (
+      !autoPilotEnabled ||
+      loading ||
+      submissions.length === 0 ||
+      aiBatchProgress !== null ||
+      publishingWinners ||
+      autoPilotBusyRef.current
+    ) {
+      return;
+    }
+
+    const unevaluated = submissions.filter(
+      (item) =>
+        !isAlreadyEvaluated(item) && !autoAttemptedIdsRef.current.has(item.id)
+    );
+    const podiumUpdates = computeExpectedPodiumUpdates(submissions);
+
+    if (unevaluated.length > 0 || podiumUpdates.length > 0) {
+      let cancelled = false;
+      autoPilotBusyRef.current = true;
+      setAutoPilotRunning(true);
+
+      const runCycle = async () => {
+        try {
+          const updatedMap = new Map<string, MoonEventSubmission>(
+            submissions.map((s) => [s.id, s])
+          );
+
+          if (unevaluated.length > 0) {
+            setAutoPilotInfo(
+              `Auto-Pilot AI memverifikasi & menilai ${unevaluated.length} laporan masuk secara otomatis...`
+            );
+            const { verifiedSet } =
+              await verifySignedAiPreEvaluations(unevaluated);
+            const fallbackQueue: MoonEventSubmission[] = [];
+
+            for (const item of unevaluated) {
+              if (cancelled) break;
+              autoAttemptedIdsRef.current.add(item.id);
+              if (verifiedSet.has(item.id) && typeof item.aiScore === 'number') {
+                const initialStatus = mapAiToJudgeStatus(
+                  item.aiRecommendedStatus,
+                  item.aiPhotoMatchStatus
+                );
+                const note = (item.aiSummaryNote || '').slice(
+                  0,
+                  MOON_EVENT_LIMITS.adminNoteMax
+                );
+                await updateDoc(doc(db, 'moonEventSubmissions', item.id), {
+                  judgeStatus: initialStatus,
+                  adminScore: item.aiScore,
+                  adminNote: note,
+                  updatedAt: serverTimestamp(),
+                });
+                updatedMap.set(item.id, {
+                  ...item,
+                  judgeStatus: initialStatus,
+                  adminScore: item.aiScore,
+                  adminNote: note,
+                });
+              } else {
+                fallbackQueue.push(item);
+              }
+            }
+
+            for (let i = 0; i < fallbackQueue.length; i += 1) {
+              if (cancelled) break;
+              const item = fallbackQueue[i];
+              setAutoPilotInfo(
+                `Auto-Pilot AI menilai otomatis ${item.airlineName} (${i + 1}/${fallbackQueue.length})...`
+              );
+              try {
+                const allList = Array.from(updatedMap.values());
+                const byProfit = [...allList].sort(
+                  (a, b) => b.totalProfit - a.totalProfit
+                );
+                const byOp = [...allList].sort(
+                  (a, b) => b.operatingProfit - a.operatingProfit
+                );
+                const byMargin = [...allList].sort(
+                  (a, b) => calcMarginPct(b) - calcMarginPct(a)
+                );
+                const pIdx = byProfit.findIndex((s) => s.id === item.id);
+                const mIdx = byMargin.findIndex((s) => s.id === item.id);
+
+                const result = await requestAiEvaluation(item, {
+                  totalParticipants: allList.length,
+                  maxTotalProfit: byProfit[0]?.totalProfit ?? item.totalProfit,
+                  maxOperatingProfit:
+                    byOp[0]?.operatingProfit ?? item.operatingProfit,
+                  maxMarginPct: byMargin[0]
+                    ? calcMarginPct(byMargin[0])
+                    : calcMarginPct(item),
+                  rankByTotalProfit: pIdx >= 0 ? pIdx + 1 : 1,
+                  rankByMargin: mIdx >= 0 ? mIdx + 1 : 1,
+                });
+
+                const initialStatus = mapAiToJudgeStatus(
+                  result.recommendedStatus,
+                  result.photoMatchStatus
+                );
+                await updateDoc(doc(db, 'moonEventSubmissions', item.id), {
+                  judgeStatus: initialStatus,
+                  adminScore: result.score,
+                  adminNote: result.summaryNote,
+                  updatedAt: serverTimestamp(),
+                });
+                updatedMap.set(item.id, {
+                  ...item,
+                  judgeStatus: initialStatus,
+                  adminScore: result.score,
+                  adminNote: result.summaryNote,
+                });
+              } catch {
+                // Keep manual retry available without blocking remaining queue
+              }
+              if (i < fallbackQueue.length - 1) {
+                await new Promise((r) => setTimeout(r, 350));
+              }
+            }
+          }
+
+          if (!cancelled) {
+            await syncPodiumStandings(Array.from(updatedMap.values()));
+            setSortBy('adminScore');
+            setAutoPilotInfo(
+              'Penilaian AI & pengurutan peringkat berdasarkan poin selesai otomatis.'
+            );
+          }
+        } finally {
+          autoPilotBusyRef.current = false;
+          if (!cancelled) {
+            setAutoPilotRunning(false);
+          }
+        }
+      };
+
+      void runCycle();
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    if (
+      autoPublishAtAnnouncement &&
+      activePhase === 'announcement' &&
+      submissions.every(isAlreadyEvaluated)
+    ) {
+      const topDigest = [...submissions]
+        .filter((s) => s.judgeStatus !== 'Diskualifikasi')
+        .sort((a, b) => (b.adminScore ?? 0) - (a.adminScore ?? 0))
+        .slice(0, 10)
+        .map((s) => `${s.id}:${s.adminScore ?? 0}:${s.judgeStatus ?? ''}`)
+        .join('|');
+
+      if (topDigest && topDigest !== lastPublishedDigestRef.current) {
+        lastPublishedDigestRef.current = topDigest;
+        void handlePublishTopTenWinners();
+      }
+    }
+  }, [
+    autoPilotEnabled,
+    autoPublishAtAnnouncement,
+    activePhase,
+    loading,
+    submissions,
+    aiBatchProgress,
+    publishingWinners,
+    verifySignedAiPreEvaluations,
+    syncPodiumStandings,
+    handlePublishTopTenWinners,
+  ]);
+
+  const toggleAutoPilot = () => {
+    const next = !autoPilotEnabled;
+    setAutoPilotEnabled(next);
+    if (next) {
+      autoAttemptedIdsRef.current.clear();
+    }
+    try {
+      window.localStorage.setItem('aotm_autopilot_ai_v1', next ? '1' : '0');
+    } catch {
+      // Ignore storage error
+    }
   };
+
+  const toggleAutoPublish = () => {
+    const next = !autoPublishAtAnnouncement;
+    setAutoPublishAtAnnouncement(next);
+    try {
+      window.localStorage.setItem('aotm_autopublish_v1', next ? '1' : '0');
+    } catch {
+      // Ignore storage error
+    }
+  };
+
+  const preEvaluatedOfflineCount = useMemo(
+    () =>
+      submissions.filter(
+        (s) =>
+          typeof s.aiScore === 'number' &&
+          typeof s.aiSignature === 'string' &&
+          /^[a-f0-9]{64}$/.test(s.aiSignature)
+      ).length,
+    [submissions]
+  );
 
   return (
     <div
@@ -840,6 +1322,147 @@ export function AdminEvaluationVault({
           </p>
         </div>
       </div>
+
+      {/* Autonomous AI Auto-Pilot Bar (Offline Judging + Point-Sorted Ranking) */}
+      <div className="mt-4 flex flex-col justify-between gap-3 rounded-xl border border-white/10 bg-[#080E18] p-4 lg:flex-row lg:items-center">
+        <div className="space-y-1">
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <Bot
+              className={`h-4 w-4 ${
+                autoPilotRunning
+                  ? 'animate-pulse text-[#E5C158]'
+                  : autoPilotEnabled
+                    ? 'text-emerald-400'
+                    : 'text-slate-400'
+              }`}
+            />
+            <span className="font-semibold text-white">
+              Mode Auto-Pilot AI (Saat Admin Offline)
+            </span>
+            <span
+              className={`rounded px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${
+                autoPilotEnabled
+                  ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-400/30'
+                  : 'bg-slate-800 text-slate-400 border border-white/10'
+              }`}
+            >
+              {autoPilotRunning
+                ? 'Sedang Menilai...'
+                : autoPilotEnabled
+                  ? 'Aktif Otomatis'
+                  : 'Nonaktif'}
+            </span>
+          </div>
+          <p className="text-[11px] leading-relaxed text-slate-400">
+            {autoPilotRunning && autoPilotInfo
+              ? autoPilotInfo
+              : submissions.length === 0
+                ? 'Setiap laporan yang masuk langsung dinilai AI (bahkan saat admin offline) lalu otomatis diurutkan sesuai poin tertinggi.'
+                : unjudgedCount === 0
+                  ? `Semua ${submissions.length} maskapai telah dinilai otomatis & diurutkan sesuai poin (${preEvaluatedOfflineCount} dinilai saat admin offline).`
+                  : `${unjudgedCount} maskapai menunggu sinkronisasi Auto-Pilot AI.`}
+          </p>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+          <button
+            type="button"
+            onClick={toggleAutoPublish}
+            className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-[11px] font-medium transition-colors whitespace-nowrap ${
+              autoPublishAtAnnouncement
+                ? 'border-[#D4AF37]/50 bg-[#D4AF37]/10 text-[#E5C158]'
+                : 'border-white/12 bg-[#0D1524] text-slate-400 hover:text-white'
+            }`}
+          >
+            <Megaphone className="h-3.5 w-3.5" />
+            {autoPublishAtAnnouncement
+              ? 'Auto-Terbit Jam Pengumuman: ON'
+              : 'Auto-Terbit Jam Pengumuman: OFF'}
+          </button>
+
+          <button
+            type="button"
+            onClick={toggleAutoPilot}
+            className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-[11px] font-semibold transition-colors whitespace-nowrap ${
+              autoPilotEnabled
+                ? 'border-emerald-400/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20'
+                : 'border-white/15 bg-[#0D1524] text-slate-300 hover:text-white'
+            }`}
+          >
+            {autoPilotEnabled ? 'Auto-Pilot: ON' : 'Aktifkan Auto-Pilot'}
+          </button>
+        </div>
+      </div>
+
+      {/* Automatic Top 1 Candidate Check (Based on 3 Official Criteria) */}
+      {topOneRecommendation && (
+        <div className="mt-4 flex flex-col justify-between gap-4 rounded-xl border border-[#D4AF37]/40 bg-[#080E18] p-4 sm:flex-row sm:items-center">
+          <div className="space-y-1">
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <span className="inline-flex items-center gap-1.5 font-semibold text-[#E5C158]">
+                <Trophy className="h-3.5 w-3.5 text-[#D4AF37]" />
+                Cek Otomatis Kandidat Layak Top 1
+              </span>
+              <span className="text-white/25">·</span>
+              <span className="text-[11px] text-slate-400">
+                {topOneRecommendation.aiEvaluated
+                  ? 'Berdasarkan Skor Juri/AI, Keaslian Foto, Akurasi 5 Angka & Margin'
+                  : 'Sementara berdasarkan Profit, 5 Angka & Margin (klik Nilai AI untuk cek foto otomatis)'}
+              </span>
+            </div>
+            <p className="font-display text-base font-bold text-white">
+              {topOneRecommendation.candidate.airlineName}{' '}
+              <span className="font-sans text-xs font-normal text-slate-400">
+                ({topOneRecommendation.candidate.alliance})
+              </span>
+            </p>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-slate-300">
+              <span>
+                Profit:{' '}
+                <strong className="font-mono text-white">
+                  {formatMetric(topOneRecommendation.candidate.totalProfit)}
+                </strong>
+              </span>
+              <span>
+                Margin:{' '}
+                <strong className="font-mono text-emerald-300">
+                  {topOneRecommendation.marginPct.toFixed(1)}%
+                </strong>
+              </span>
+              <span>
+                Poin:{' '}
+                <strong className="font-mono text-[#E5C158]">
+                  {typeof topOneRecommendation.candidate.adminScore === 'number'
+                    ? `${topOneRecommendation.candidate.adminScore}/100`
+                    : 'Belum dinilai AI'}
+                </strong>
+              </span>
+              <span
+                className={
+                  topOneRecommendation.isVerifiedClean &&
+                  topOneRecommendation.hasValidFiveMetrics &&
+                  topOneRecommendation.hasBothPhotos
+                    ? 'text-emerald-300 font-medium'
+                    : 'text-amber-300 font-medium'
+                }
+              >
+                {topOneRecommendation.isVerifiedClean
+                  ? '✓ Lolos 3 Kriteria & Foto Terverifikasi'
+                  : 'Perlu verifikasi/nilai AI'}
+              </span>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => openJudgingCard(topOneRecommendation.candidate)}
+            className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg border border-[#D4AF37]/50 bg-[#131F33] px-3.5 py-2 text-xs font-semibold text-[#E5C158] transition-colors hover:border-[#D4AF37] hover:text-white whitespace-nowrap"
+          >
+            <Eye className="h-3.5 w-3.5" />
+            Periksa Bukti Top 1
+          </button>
+        </div>
+      )}
 
       {/* Filter & Sort Toolbar */}
       <div className="mt-6 flex flex-col gap-3 border-y border-amber-500/25 py-4 lg:flex-row lg:items-center lg:justify-between">

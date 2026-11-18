@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
 import path from 'node:path';
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import { GoogleGenAI, Type } from '@google/genai';
 const isProduction = process.env.NODE_ENV === 'production';
 // In development, dev server must run on port 3000 per environment constraints
@@ -19,7 +20,10 @@ interface EvaluateSubmissionBody {
   peerStats?: {
     totalParticipants?: number;
     maxTotalProfit?: number;
+    maxOperatingProfit?: number;
+    maxMarginPct?: number;
     rankByTotalProfit?: number;
+    rankByMargin?: number;
   };
 }
 
@@ -61,6 +65,59 @@ function formatFriendlyAiError(error: unknown): string {
   return 'Gagal menjalankan penilaian otomatis AI. Silakan coba lagi beberapa saat.';
 }
 
+function cleanJsonText(raw: string): string {
+  const trimmed = raw.trim();
+  if (trimmed.startsWith('```')) {
+    return trimmed
+      .replace(/^```(?:json)?\s*/i, '')
+      .replace(/\s*```$/, '')
+      .trim();
+  }
+  return trimmed;
+}
+
+function isAuthConfigError(error: unknown): boolean {
+  const msg = error instanceof Error ? error.message : String(error);
+  return msg.includes('API_KEY_INVALID') || msg.includes('PERMISSION_DENIED');
+}
+
+function signAiEvaluation(
+  secret: string,
+  payload: {
+    airlineName: string;
+    alliance: string;
+    totalProfit: number;
+    codeshareProfit: number;
+    operatingProfit: number;
+    revenue: number;
+    operatingCost: number;
+    score: number;
+    recommendedStatus: string;
+    photoMatchStatus: string;
+    top1Eligible: boolean;
+    summaryNote: string;
+  }
+): string {
+  const canonical = [
+    payload.airlineName,
+    payload.alliance,
+    String(payload.totalProfit),
+    String(payload.codeshareProfit),
+    String(payload.operatingProfit),
+    String(payload.revenue),
+    String(payload.operatingCost),
+    String(payload.score),
+    payload.recommendedStatus,
+    payload.photoMatchStatus,
+    payload.top1Eligible ? '1' : '0',
+    payload.summaryNote,
+  ].join('|');
+
+  return createHmac('sha256', `aotm-eval-v1:${secret}`)
+    .update(canonical)
+    .digest('hex');
+}
+
 async function generateEvaluationWithRetry(
   ai: GoogleGenAI,
   parts: Array<
@@ -83,7 +140,7 @@ async function generateEvaluationWithRetry(
           contents: { parts },
           config: {
             systemInstruction:
-              'Anda adalah juri profesional kompetisi maskapai penerbangan Akasha Alliance (Airlines of The Moon). Berikan penilaian adil, objektif, dan ringkas dalam format JSON yang diminta.',
+              'Anda adalah ketua dewan juri resmi kompetisi maskapai penerbangan AOTM Nusantara Alliance. Evaluasi peserta secara objektif berdasarkan 3 kriteria resmi: (1) Keaslian Bukti Visual, (2) Akurasi 5 Angka Keuangan vs Foto, dan (3) Margin & Efisiensi Armada. Kembalikan hanya JSON valid.',
             responseMimeType: 'application/json',
             responseSchema: {
               type: Type.OBJECT,
@@ -103,16 +160,22 @@ async function generateEvaluationWithRetry(
                   description:
                     'Salah satu dari: Sesuai, Perlu Cek Manual, Tidak Sesuai',
                 },
+                top1Eligible: {
+                  type: Type.BOOLEAN,
+                  description:
+                    'True jika peserta memenuhi semua 3 kriteria dan layak menjadi kandidat Juara 1 (Top 1).',
+                },
                 summaryNote: {
                   type: Type.STRING,
                   description:
-                    'Ringkasan penilaian juri dalam Bahasa Indonesia, maksimal 380 karakter.',
+                    'Ringkasan penilaian 3 kriteria & kelayakan Top 1 dalam Bahasa Indonesia, maksimal 360 karakter.',
                 },
               },
               required: [
                 'score',
                 'recommendedStatus',
                 'photoMatchStatus',
+                'top1Eligible',
                 'summaryNote',
               ],
             },
@@ -120,8 +183,12 @@ async function generateEvaluationWithRetry(
         });
       } catch (err) {
         lastError = err;
-        if (!isTransientHighDemandError(err)) {
+        if (isAuthConfigError(err)) {
           throw err;
+        }
+        if (!isTransientHighDemandError(err)) {
+          console.warn(`Gemini ${modelName} error, trying fallback if available:`, err);
+          break;
         }
         console.warn(
           `Gemini ${modelName} transient busy (attempt ${attempt + 1}/${delays.length})`
@@ -254,12 +321,16 @@ async function createAppServer() {
         return;
       }
 
-      const marginPct =
-        revenue > 0 ? ((operatingProfit / revenue) * 100).toFixed(2) : '0.00';
+      const marginPctNum = revenue > 0 ? (operatingProfit / revenue) * 100 : 0;
+      const marginPct = marginPctNum.toFixed(2);
+      const costRatioPct = revenue > 0 ? ((operatingCost / revenue) * 100).toFixed(2) : '0.00';
 
       const peerRank = body.peerStats?.rankByTotalProfit ?? 1;
+      const rankByMargin = body.peerStats?.rankByMargin ?? 1;
       const totalParticipants = body.peerStats?.totalParticipants ?? 1;
       const maxTotalProfit = body.peerStats?.maxTotalProfit ?? totalProfit;
+      const maxOperatingProfit = body.peerStats?.maxOperatingProfit ?? operatingProfit;
+      const maxMarginPct = body.peerStats?.maxMarginPct ?? marginPctNum;
 
       const ai = new GoogleGenAI({
         apiKey,
@@ -271,7 +342,7 @@ async function createAppServer() {
       });
 
       const promptText = [
-        `Evaluasi laporan peserta kompetisi "Airlines of The Moon" dari Akasha Alliance.`,
+        `Evaluasi laporan peserta kompetisi "AOTM Nusantara Alliance" berdasarkan 3 Kriteria Resmi Dewan Juri:`,
         ``,
         `Data yang diinput peserta:`,
         `- Nama maskapai: ${airlineName}`,
@@ -281,18 +352,27 @@ async function createAppServer() {
         `- Operating profit: ${operatingProfit}`,
         `- Revenue: ${revenue}`,
         `- Operating cost: ${operatingCost}`,
-        `- Rasio Margin (Operating Profit / Revenue): ${marginPct}%`,
+        `- Rasio Margin Efisiensi (Operating Profit / Revenue): ${marginPct}%`,
+        `- Rasio Biaya Operasional (Operating Cost / Revenue): ${costRatioPct}%`,
         ``,
-        `Posisi relatif terhadap peserta saat ini:`,
-        `- Peringkat Total Profit sementara: #${peerRank} dari ${totalParticipants} peserta`,
-        `- Total Profit tertinggi di kompetisi: ${maxTotalProfit}`,
+        `Perbandingan terhadap seluruh peserta saat ini (${totalParticipants} maskapai):`,
+        `- Peringkat Total Profit: #${peerRank} dari ${totalParticipants} (Tertinggi: ${maxTotalProfit})`,
+        `- Operating Profit Tertinggi Kompetisi: ${maxOperatingProfit}`,
+        `- Peringkat Margin Efisiensi: #${rankByMargin} dari ${totalParticipants} (Tertinggi: ${Number(maxMarginPct).toFixed(2)}%)`,
         ``,
-        `Tugas penilaian Anda:`,
-        `1. Periksa GAMBAR 1 (Foto profit maskapai) dan GAMBAR 2 (Foto maskapai). Cek apakah gambar tersebut benar screenshot/foto game maskapai & halaman profit/keuangan, dan apakah angka di Gambar 1 cocok atau wajar dengan angka yang diinput peserta.`,
-        `2. Berikan nilai objektif 0 sampai 100 (score) mempertimbangkan: kekuatan Total Profit & Operating Profit dibandingkan peserta lain, efisiensi Margin Revenue vs Operating Cost, kontribusi Codeshare Profit, serta kejelasan/kesesuaian foto bukti.`,
-        `3. Pilih recommendedStatus dari tepat salah satu opsi: "Juara 1", "Juara 2", "Juara 3", "Terverifikasi", "Menunggu", atau "Diskualifikasi". (Gunakan "Juara 1/2/3" hanya jika peringkat & bukti kuat layak podium; gunakan "Terverifikasi" jika valid namun bukan podium; gunakan "Menunggu" jika foto buram/perlu cek manual; gunakan "Diskualifikasi" hanya jika foto jelas palsu/tidak relevan sama sekali).`,
-        `4. Pilih photoMatchStatus dari: "Sesuai", "Perlu Cek Manual", atau "Tidak Sesuai".`,
-        `5. Tulis summaryNote singkat dalam Bahasa Indonesia (maksimal 380 karakter) yang merangkum hasil cek foto dan performa keuangan untuk catatan juri.`,
+        `3 KRITERIA WAJIB PENILAIAN DEWAN JURI:`,
+        `1. [01 · Keaslian Bukti Visual]: Periksa GAMBAR 1 (Foto profit maskapai) dan GAMBAR 2 (Foto profil/armada maskapai). Pastikan keduanya tangkapan layar asli langsung dari game tanpa editan/manipulasi, jelas, dan bukan gambar kosong/asal.`,
+        `2. [02 · Akurasi 5 Angka Keuangan]: Periksa apakah Total Profit, Codeshare Profit, Operating Profit, Revenue, dan Operating Cost di formulir cocok/konsisten dengan angka pada GAMBAR 1.`,
+        `3. [03 · Margin & Efisiensi Armada]: Nilai performa laba bersih (Total Profit & Operating Profit), efisiensi biaya operasional (Margin % & rasio biaya), serta kontribusi Codeshare Profit dibandingkan peserta lain untuk menentukan kelayakan Top 1–10.`,
+        ``,
+        `Aturan Output:`,
+        `- Berikan nilai objektif 0 sampai 100 (score). Peserta hanya layak mendapat skor tinggi (90–100) & top1Eligible = true jika Foto Sesuai/Asli, 5 Angka Akurat, serta Profit & Margin berada di jajaran teratas.`,
+        `- Pilih recommendedStatus tepat satu dari: "Juara 1", "Juara 2", "Juara 3", "Terverifikasi", "Menunggu", atau "Diskualifikasi".`,
+        `  * Gunakan "Juara 1" hanya jika top1Eligible = true dan peringkat #1 sangat kuat di 3 kriteria.`,
+        `  * Gunakan "Diskualifikasi" jika foto palsu/editan/tidak relevan sama sekali atau angka jelas dimanipulasi.`,
+        `  * Gunakan "Menunggu" jika foto buram atau angka tidak terbaca jelas sehingga perlu cek manual admin.`,
+        `- Pilih photoMatchStatus dari: "Sesuai", "Perlu Cek Manual", atau "Tidak Sesuai".`,
+        `- Tulis summaryNote ringkas dalam Bahasa Indonesia (maksimal 340 karakter) yang menyebut status foto, keakuratan angka, dan alasan layak/tidaknya masuk Top 1.`,
       ].join('\n');
 
       const response = await generateEvaluationWithRetry(ai, [
@@ -313,7 +393,7 @@ async function createAppServer() {
         { text: promptText },
       ]);
 
-      const rawText = (response.text ?? '').trim();
+      const rawText = cleanJsonText(response.text ?? '');
       if (!rawText) {
         res.status(502).json({
           error: 'Model AI tidak mengembalikan hasil evaluasi.',
@@ -325,6 +405,7 @@ async function createAppServer() {
         score?: number;
         recommendedStatus?: string;
         photoMatchStatus?: string;
+        top1Eligible?: boolean;
         summaryNote?: string;
       };
 
@@ -353,6 +434,7 @@ async function createAppServer() {
         ? String(parsed.photoMatchStatus)
         : 'Perlu Cek Manual';
 
+      const top1Eligible = parsed.top1Eligible === true && photoMatchStatus === 'Sesuai';
       const rawScore = Number(parsed.score);
       const score = Number.isFinite(rawScore)
         ? Math.max(0, Math.min(100, Math.round(rawScore * 10) / 10))
@@ -360,22 +442,112 @@ async function createAppServer() {
 
       const summaryNote = String(parsed.summaryNote || '')
         .trim()
-        .slice(0, 480);
+        .slice(0, 440);
+      const top1Prefix = top1Eligible ? ' · Layak Top 1' : '';
+      const finalSummaryNote = `[AI · Foto: ${photoMatchStatus}${top1Prefix}] ${summaryNote}`.slice(
+        0,
+        490
+      );
+
+      const signingSecret = process.env.AI_EVAL_SECRET || apiKey;
+      const aiSignature = signAiEvaluation(signingSecret, {
+        airlineName,
+        alliance,
+        totalProfit,
+        codeshareProfit,
+        operatingProfit,
+        revenue,
+        operatingCost,
+        score,
+        recommendedStatus,
+        photoMatchStatus,
+        top1Eligible,
+        summaryNote: finalSummaryNote,
+      });
 
       res.json({
         score,
         recommendedStatus,
         photoMatchStatus,
-        summaryNote: `[AI · Foto: ${photoMatchStatus}] ${summaryNote}`.slice(
-          0,
-          490
-        ),
+        top1Eligible,
+        summaryNote: finalSummaryNote,
+        aiSignature,
       });
     } catch (error) {
       console.error('AI evaluation error:', error);
       const statusCode = isTransientHighDemandError(error) ? 503 : 500;
       res.status(statusCode).json({ error: formatFriendlyAiError(error) });
     }
+  });
+
+  app.post('/api/ai/verify-submission-eval', (req, res) => {
+    const apiKey = process.env.GEMINI_API_KEY || '';
+    const signingSecret = process.env.AI_EVAL_SECRET || apiKey;
+    if (!signingSecret) {
+      res.status(500).json({
+        error: 'Kunci verifikasi server belum terkonfigurasi.',
+      });
+      return;
+    }
+
+    const body = (req.body || {}) as {
+      items?: Array<{
+        id?: string;
+        airlineName?: string;
+        alliance?: string;
+        totalProfit?: number;
+        codeshareProfit?: number;
+        operatingProfit?: number;
+        revenue?: number;
+        operatingCost?: number;
+        aiScore?: number;
+        aiRecommendedStatus?: string;
+        aiPhotoMatchStatus?: string;
+        aiTop1Eligible?: boolean;
+        aiSummaryNote?: string;
+        aiSignature?: string;
+      }>;
+    };
+
+    const items = Array.isArray(body.items) ? body.items.slice(0, 200) : [];
+    const verifiedIds: string[] = [];
+    const invalidIds: string[] = [];
+
+    for (const item of items) {
+      const id = String(item.id || '').trim();
+      if (!id) continue;
+
+      const sig = String(item.aiSignature || '').trim();
+      if (!/^[a-f0-9]{64}$/.test(sig)) {
+        invalidIds.push(id);
+        continue;
+      }
+
+      const expected = signAiEvaluation(signingSecret, {
+        airlineName: String(item.airlineName || '').trim(),
+        alliance: String(item.alliance || '').trim(),
+        totalProfit: Number(item.totalProfit),
+        codeshareProfit: Number(item.codeshareProfit),
+        operatingProfit: Number(item.operatingProfit),
+        revenue: Number(item.revenue),
+        operatingCost: Number(item.operatingCost),
+        score: Number(item.aiScore),
+        recommendedStatus: String(item.aiRecommendedStatus || ''),
+        photoMatchStatus: String(item.aiPhotoMatchStatus || ''),
+        top1Eligible: item.aiTop1Eligible === true,
+        summaryNote: String(item.aiSummaryNote || ''),
+      });
+
+      const sigBuf = Buffer.from(sig, 'hex');
+      const expBuf = Buffer.from(expected, 'hex');
+      if (sigBuf.length === expBuf.length && timingSafeEqual(sigBuf, expBuf)) {
+        verifiedIds.push(id);
+      } else {
+        invalidIds.push(id);
+      }
+    }
+
+    res.json({ verifiedIds, invalidIds });
   });
 
   if (!isProduction) {
