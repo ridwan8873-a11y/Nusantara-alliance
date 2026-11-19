@@ -4,10 +4,10 @@ import {
   ExternalLink,
   ShieldCheck,
 } from 'lucide-react';
-import brightSkyBackdropImg from './assets/images/bright_sky_aviation_backdrop_1795055898145.jpg';
 import { AirlinesOfTheMoonSection } from './components/AirlinesOfTheMoonSection';
 import { LoadingSplash } from './components/LoadingSplash';
 import { Navbar } from './components/Navbar';
+import { SkyMotionBackdrop } from './components/SkyMotionBackdrop';
 import { useOnlinePresence } from './hooks/useOnlinePresence';
 import { ADMIN_EMAIL, auth, signInWithGoogle } from './lib/firebase';
 
@@ -16,7 +16,6 @@ const WHATSAPP_GROUP_URL =
 
 export default function App() {
   const [showSplash, setShowSplash] = useState(true);
-  const [bgError, setBgError] = useState(false);
 
   const [user, setUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState(false);
@@ -81,20 +80,8 @@ export default function App() {
         />
       )}
 
-      {/* Bright Daylight Aviation Sky Backdrop */}
-      <div className="pointer-events-none fixed inset-0 z-0 overflow-hidden">
-        {!bgError && (
-          <img
-            src={brightSkyBackdropImg}
-            alt=""
-            aria-hidden="true"
-            referrerPolicy="no-referrer"
-            onError={() => setBgError(true)}
-            className="h-full w-full scale-[1.02] object-cover object-center opacity-100"
-          />
-        )}
-        <div className="absolute inset-0 bg-gradient-to-b from-sky-900/15 via-transparent to-sky-950/20" />
-      </div>
+      {/* Live Animated Bright Sky & Aviation Flight Backdrop */}
+      <SkyMotionBackdrop />
 
       <div className="relative z-10 flex min-h-screen flex-col justify-between">
         <Navbar

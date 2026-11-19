@@ -65,6 +65,30 @@
   animation-play-state: paused;
 }
 
+@keyframes skyCameraDrift {
+  0% {
+    transform: scale(1.03) translate3d(0%, 0%, 0);
+  }
+  50% {
+    transform: scale(1.1) translate3d(-1.8%, -1%, 0);
+  }
+  100% {
+    transform: scale(1.05) translate3d(1.4%, -0.6%, 0);
+  }
+}
+
+.sky-camera-drift {
+  will-change: transform;
+  animation: skyCameraDrift 28s ease-in-out infinite alternate;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sky-camera-drift {
+    animation: none;
+    transform: scale(1.02);
+  }
+}
+
 
 
 
