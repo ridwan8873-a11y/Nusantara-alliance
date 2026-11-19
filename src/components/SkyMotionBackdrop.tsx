@@ -222,8 +222,6 @@ function drawCommercialAirliner(
 
 export function SkyMotionBackdrop() {
   const [bgError, setBgError] = useState(false);
-  const [currentPhase, setCurrentPhase] = useState<SkyPhase>('Hujan');
-  const [currentTimeStr, setCurrentTimeStr] = useState('04:00');
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const tintRef = useRef<HTMLDivElement | null>(null);
 
@@ -314,7 +312,6 @@ export function SkyMotionBackdrop() {
 
     let rafId = 0;
     let lastTime = performance.now();
-    let lastPhase: SkyPhase = 'Hujan';
 
     const drawFrame = (now: number) => {
       const dt = Math.min((now - lastTime) / 1000, 0.08);
@@ -322,12 +319,6 @@ export function SkyMotionBackdrop() {
       const elapsedSec = (Date.now() - SKY_START_TIME) / 1000;
 
       const weather = getSkyWeatherState(elapsedSec);
-      if (weather.phase !== lastPhase) {
-        lastPhase = weather.phase;
-        setCurrentPhase(weather.phase);
-      }
-      setCurrentTimeStr(weather.timeString);
-
       const { storm, morningFactor, soreFactor, nightFactor } = weather;
 
       // Update ambient gradient tint smoothly
@@ -665,22 +656,7 @@ export function SkyMotionBackdrop() {
         className="absolute inset-0 h-full w-full"
       />
 
-      {/* Live Time / Weather Badge Indicator */}
-      <div className="absolute bottom-4 left-4 z-10 hidden sm:flex items-center gap-2 rounded-full border border-white/20 bg-slate-900/65 px-3 py-1.5 backdrop-blur-md text-[11px] font-medium text-slate-200 shadow-lg">
-        <span className="relative flex h-2 w-2">
-          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#D4AF37] opacity-75"></span>
-          <span className="relative inline-flex h-2 w-2 rounded-full bg-[#D4AF37]"></span>
-        </span>
-        <span className="font-mono font-bold text-amber-300 mr-0.5">{currentTimeStr}</span>
-        <span>·</span>
-        <span>
-          {currentPhase === 'Hujan' && '🌧️ Hujan & Mendung'}
-          {currentPhase === 'Pagi' && '🌅 Pagi · Matahari Terbit'}
-          {currentPhase === 'Siang' && '☀️ Siang · Langit Terang'}
-          {currentPhase === 'Sore' && '🌇 Sore · Sunset Keemasan'}
-          {currentPhase === 'Malam' && '🌙 Malam · Bintang & Lampu Kabin'}
-        </span>
-      </div>
+
 
       <div className="absolute inset-0 bg-gradient-to-b from-sky-900/15 via-transparent to-sky-950/20" />
     </div>
