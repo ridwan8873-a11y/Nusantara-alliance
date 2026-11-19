@@ -1,5 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import brightSkyBackdropImg from '../assets/images/bright_sky_aviation_backdrop_1795055898145.jpg';
+import {
+  CYCLE_DURATION_SEC,
+  getSkyWeatherState,
+  SKY_START_TIME,
+  type SkyPhase,
+} from '../lib/skyTime';
 
 interface CloudPuff {
   x: number;
@@ -37,78 +43,8 @@ interface Star {
   baseAlpha: number;
 }
 
-type TimePhase = 'Hujan' | 'Pagi' | 'Siang' | 'Malam';
-
-interface WeatherState {
-  phase: TimePhase;
-  storm: number; // 0 (sunny) to 1 (heavy rain)
-  morningFactor: number; // 0 to 1
-  nightFactor: number; // 0 to 1
-}
-
-function lerp(a: number, b: number, t: number): number {
-  return a + (b - a) * t;
-}
-
 function clamp01(v: number): number {
   return Math.max(0, Math.min(1, v));
-}
-
-/**
- * Fast continuous 36-second cycle:
- * 0s - 7s (7s): Hujan & Mendung (Initial entry greeting!)
- * 7s - 14s (7s): Pagi (Golden sunrise)
- * 14s - 23s (9s): Siang (Bright daylight)
- * 23s - 32s (9s): Malam (Starry night)
- * 32s - 36s (4s): Transition back to Hujan
- */
-function getWeatherState(elapsedSec: number): WeatherState {
-  const cycle = elapsedSec % 36;
-
-  if (cycle < 7) {
-    // Rain / Storm (Initial entry)
-    return { phase: 'Hujan', storm: 1, morningFactor: 0, nightFactor: 0 };
-  } else if (cycle < 14) {
-    // Transitioning from Rain to Pagi
-    const t = (cycle - 7) / 7;
-    const smoothT = t * t * (3 - 2 * t);
-    return {
-      phase: 'Pagi',
-      storm: lerp(1, 0, smoothT),
-      morningFactor: smoothT,
-      nightFactor: 0,
-    };
-  } else if (cycle < 23) {
-    // Pagi to Siang
-    const t = (cycle - 14) / 9;
-    const smoothT = t * t * (3 - 2 * t);
-    return {
-      phase: 'Siang',
-      storm: 0,
-      morningFactor: lerp(1, 0, smoothT),
-      nightFactor: 0,
-    };
-  } else if (cycle < 32) {
-    // Siang to Malam
-    const t = (cycle - 23) / 9;
-    const smoothT = t * t * (3 - 2 * t);
-    return {
-      phase: 'Malam',
-      storm: 0,
-      morningFactor: 0,
-      nightFactor: smoothT,
-    };
-  } else {
-    // Malam back to Hujan
-    const t = (cycle - 32) / 4;
-    const smoothT = t * t * (3 - 2 * t);
-    return {
-      phase: 'Hujan',
-      storm: smoothT,
-      morningFactor: 0,
-      nightFactor: lerp(1, 0, smoothT),
-    };
-  }
 }
 
 function drawCommercialAirliner(
@@ -120,6 +56,7 @@ function drawCommercialAirliner(
   direction: 1 | -1,
   storm: number,
   nightFactor: number,
+  soreFactor: number,
   beaconPhase: number
 ) {
   ctx.save();
@@ -132,7 +69,7 @@ function drawCommercialAirliner(
   ctx.shadowOffsetY = 4;
 
   // Far wing
-  ctx.fillStyle = '#CBD5E1';
+  ctx.fillStyle = soreFactor > 0.4 ? '#FBCFE8' : '#CBD5E1';
   ctx.beginPath();
   ctx.moveTo(10, -4);
   ctx.lineTo(-14, -26);
@@ -171,8 +108,13 @@ function drawCommercialAirliner(
   ctx.closePath();
   ctx.fill();
 
-  // Fuselage
-  ctx.fillStyle = nightFactor > 0.5 ? '#F1F5F9' : '#FFFFFF';
+  // Fuselage (warm tint at sunset / slight cool gray at night)
+  ctx.fillStyle =
+    soreFactor > 0.35
+      ? '#FFF5EB'
+      : nightFactor > 0.5
+        ? '#F1F5F9'
+        : '#FFFFFF';
   ctx.beginPath();
   ctx.moveTo(58, 2);
   ctx.quadraticCurveTo(54, -8, 34, -8);
@@ -215,14 +157,17 @@ function drawCommercialAirliner(
   ctx.closePath();
   ctx.fill();
 
-  // Cabin windows (bright yellow glow at night or storm)
-  ctx.fillStyle = nightFactor > 0.4 || storm > 0.35 ? '#FDE68A' : '#1E293B';
+  // Cabin windows (bright yellow/amber glow at night, storm, or sore)
+  ctx.fillStyle =
+    nightFactor > 0.3 || storm > 0.3 || soreFactor > 0.4
+      ? '#FDE68A'
+      : '#1E293B';
   for (let wx = -32; wx <= 28; wx += 4.6) {
     ctx.fillRect(wx, -3.6, 2.4, 2.1);
   }
 
   // Near wing
-  ctx.fillStyle = '#E2E8F0';
+  ctx.fillStyle = soreFactor > 0.35 ? '#FED7AA' : '#E2E8F0';
   ctx.strokeStyle = '#64748B';
   ctx.lineWidth = 0.7;
   ctx.beginPath();
@@ -242,9 +187,9 @@ function drawCommercialAirliner(
   ctx.fillStyle = '#CBD5E1';
   ctx.fillRect(11, 8.8, 3, 5.4);
 
-  // Headlight beam during night or storm
-  if (nightFactor > 0.4 || storm > 0.25) {
-    const beamAlpha = Math.max(nightFactor, storm) * 0.35;
+  // Headlight beam during night, storm, or sore
+  if (nightFactor > 0.35 || storm > 0.25 || soreFactor > 0.5) {
+    const beamAlpha = Math.max(nightFactor, storm, soreFactor * 0.7) * 0.35;
     const beamGrad = ctx.createLinearGradient(56, 3, 150, 15);
     beamGrad.addColorStop(0, `rgba(255, 249, 214, ${beamAlpha})`);
     beamGrad.addColorStop(1, 'rgba(255, 249, 214, 0)');
@@ -277,7 +222,8 @@ function drawCommercialAirliner(
 
 export function SkyMotionBackdrop() {
   const [bgError, setBgError] = useState(false);
-  const [currentPhase, setCurrentPhase] = useState<TimePhase>('Hujan');
+  const [currentPhase, setCurrentPhase] = useState<SkyPhase>('Hujan');
+  const [currentTimeStr, setCurrentTimeStr] = useState('04:00');
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const tintRef = useRef<HTMLDivElement | null>(null);
 
@@ -367,32 +313,38 @@ export function SkyMotionBackdrop() {
     }));
 
     let rafId = 0;
-    const startTime = performance.now();
-    let lastTime = startTime;
-    let lastReportedPhase: TimePhase = 'Hujan';
+    let lastTime = performance.now();
+    let lastPhase: SkyPhase = 'Hujan';
 
     const drawFrame = (now: number) => {
       const dt = Math.min((now - lastTime) / 1000, 0.08);
       lastTime = now;
-      const elapsedSec = (now - startTime) / 1000;
+      const elapsedSec = (Date.now() - SKY_START_TIME) / 1000;
 
-      const weather = getWeatherState(elapsedSec);
-      if (weather.phase !== lastReportedPhase) {
-        lastReportedPhase = weather.phase;
+      const weather = getSkyWeatherState(elapsedSec);
+      if (weather.phase !== lastPhase) {
+        lastPhase = weather.phase;
         setCurrentPhase(weather.phase);
       }
+      setCurrentTimeStr(weather.timeString);
 
-      const { storm, morningFactor, nightFactor } = weather;
+      const { storm, morningFactor, soreFactor, nightFactor } = weather;
 
-      // Update tint overlay depending on time phase (Hujan, Pagi, Siang, Malam)
+      // Update ambient gradient tint smoothly
       if (tintRef.current) {
         if (nightFactor > 0.05) {
           tintRef.current.style.background = `linear-gradient(to bottom, rgba(10, 15, 30, ${0.82 * nightFactor}), rgba(5, 8, 20, ${0.9 * nightFactor}))`;
           tintRef.current.style.opacity = String(nightFactor);
+        } else if (soreFactor > 0.05) {
+          // Warm sunset dusk tint
+          tintRef.current.style.background = `linear-gradient(to bottom, rgba(225, 29, 72, ${0.35 * soreFactor}), rgba(245, 158, 11, ${0.45 * soreFactor}), rgba(30, 58, 138, ${0.5 * soreFactor}))`;
+          tintRef.current.style.opacity = String(soreFactor);
         } else if (morningFactor > 0.05) {
+          // Sunrise amber gold
           tintRef.current.style.background = `linear-gradient(to bottom, rgba(217, 119, 6, ${0.38 * morningFactor}), rgba(30, 58, 138, ${0.45 * morningFactor}))`;
           tintRef.current.style.opacity = String(morningFactor);
         } else if (storm > 0.05) {
+          // Storm slate
           tintRef.current.style.background = `linear-gradient(to bottom, rgba(51, 65, 85, ${0.82 * storm}), rgba(30, 41, 59, ${0.88 * storm}))`;
           tintRef.current.style.opacity = String(storm * 0.85);
         } else {
@@ -402,7 +354,7 @@ export function SkyMotionBackdrop() {
 
       ctx.clearRect(0, 0, width, height);
 
-      // Draw Twinkling Stars during Malam
+      // 1. Stars at Night
       if (nightFactor > 0.05) {
         ctx.save();
         ctx.globalAlpha = nightFactor;
@@ -418,8 +370,23 @@ export function SkyMotionBackdrop() {
         ctx.restore();
       }
 
-      // Sun / Moon / Glow
-      if (morningFactor > 0.05) {
+      // 2. Sunlight / Moon / Sunset Glow
+      if (soreFactor > 0.05) {
+        // Sunset radiance low on the western sky
+        const sunsetGrad = ctx.createRadialGradient(
+          width * 0.72,
+          height * 0.55,
+          10,
+          width * 0.72,
+          height * 0.55,
+          width * 0.65
+        );
+        sunsetGrad.addColorStop(0, `rgba(255, 125, 45, ${0.55 * soreFactor})`);
+        sunsetGrad.addColorStop(0.35, `rgba(244, 63, 94, ${0.35 * soreFactor})`);
+        sunsetGrad.addColorStop(1, 'rgba(244, 63, 94, 0)');
+        ctx.fillStyle = sunsetGrad;
+        ctx.fillRect(0, 0, width, height);
+      } else if (morningFactor > 0.05) {
         // Sunrise golden glow
         const sunGrad = ctx.createRadialGradient(
           width * 0.15,
@@ -450,7 +417,7 @@ export function SkyMotionBackdrop() {
         ctx.fillRect(0, 0, width, height);
       } else if (storm < 0.2) {
         // Siang sunbeams
-        const sunStrength = (1 - storm) * (1 - morningFactor) * (1 - nightFactor);
+        const sunStrength = (1 - storm) * (1 - morningFactor) * (1 - soreFactor) * (1 - nightFactor);
         const pulse = 0.5 + 0.5 * Math.sin(now * 0.0005);
         const beamGrad = ctx.createRadialGradient(
           width * 0.08,
@@ -467,7 +434,7 @@ export function SkyMotionBackdrop() {
         ctx.fillRect(0, 0, width, height);
       }
 
-      // Lightning during storm
+      // Lightning flash during storm
       let lightningGlow = 0;
       if (storm > 0.75) {
         const flashTick = (elapsedSec * 1.8) % 6.5;
@@ -476,7 +443,7 @@ export function SkyMotionBackdrop() {
         }
       }
 
-      // Clouds
+      // 3. Clouds
       for (const cloud of clouds) {
         if (!prefersReducedMotion) {
           const speedBoost = 1 + storm * 0.9;
@@ -487,19 +454,47 @@ export function SkyMotionBackdrop() {
         }
 
         const cy = height * cloud.yRatio;
-        const rCenter = Math.round(lerp(255, 68, Math.max(storm, nightFactor * 0.7)) + lightningGlow * 180);
-        const gCenter = Math.round(lerp(255, 82, Math.max(storm, nightFactor * 0.7)) + lightningGlow * 180);
-        const bCenter = Math.round(lerp(255, 105, Math.max(storm, nightFactor * 0.7)) + lightningGlow * 200);
 
-        const rEdge = Math.round(lerp(240, 42, Math.max(storm, nightFactor * 0.7)));
-        const gEdge = Math.round(lerp(249, 53, Math.max(storm, nightFactor * 0.7)));
-        const bEdge = Math.round(lerp(255, 72, Math.max(storm, nightFactor * 0.7)));
+        // Cloud color blending across all phases
+        let rCenter = 255;
+        let gCenter = 255;
+        let bCenter = 255;
+        let rEdge = 240;
+        let gEdge = 249;
+        let bEdge = 255;
 
-        const baseAlpha = lerp(
-          cloud.layer === 'back' ? 0.26 : 0.22,
-          cloud.layer === 'back' ? 0.65 : 0.58,
-          Math.max(storm, nightFactor * 0.6)
-        );
+        if (storm > 0.05) {
+          rCenter = Math.round(255 - storm * 187 + lightningGlow * 180);
+          gCenter = Math.round(255 - storm * 173 + lightningGlow * 180);
+          bCenter = Math.round(255 - storm * 150 + lightningGlow * 200);
+          rEdge = Math.round(240 - storm * 198);
+          gEdge = Math.round(249 - storm * 196);
+          bEdge = Math.round(255 - storm * 183);
+        } else if (soreFactor > 0.05) {
+          // Warm peach clouds with amber golden edges
+          rCenter = Math.round(255);
+          gCenter = Math.round(255 - soreFactor * 55);
+          bCenter = Math.round(255 - soreFactor * 95);
+          rEdge = Math.round(255);
+          gEdge = Math.round(240 - soreFactor * 80);
+          bEdge = Math.round(220 - soreFactor * 130);
+        } else if (nightFactor > 0.05) {
+          rCenter = Math.round(255 - nightFactor * 180);
+          gCenter = Math.round(255 - nightFactor * 170);
+          bCenter = Math.round(255 - nightFactor * 145);
+          rEdge = Math.round(240 - nightFactor * 190);
+          gEdge = Math.round(249 - nightFactor * 190);
+          bEdge = Math.round(255 - nightFactor * 175);
+        }
+
+        const baseAlpha =
+          storm > 0
+            ? 0.22 + storm * 0.42
+            : soreFactor > 0
+              ? 0.24 + soreFactor * 0.28
+              : nightFactor > 0
+                ? 0.22 + nightFactor * 0.36
+                : 0.22;
 
         const grad = ctx.createRadialGradient(
           cloud.x,
@@ -528,7 +523,7 @@ export function SkyMotionBackdrop() {
         ctx.restore();
       }
 
-      // Airplanes
+      // 4. Large clearly visible Airplanes
       for (let i = 0; i < planes.length; i++) {
         const plane = planes[i];
         if (!prefersReducedMotion) {
@@ -565,8 +560,11 @@ export function SkyMotionBackdrop() {
             const p0 = plane.trail[j - 1];
             const p1 = plane.trail[j];
             const ratio = j / plane.trail.length;
-            const trailAlpha = ratio * lerp(0.45, 0.22, storm);
-            ctx.strokeStyle = `rgba(255, 255, 255, ${trailAlpha})`;
+            const trailAlpha = ratio * (storm > 0 ? 0.25 : soreFactor > 0 ? 0.4 : 0.45);
+            ctx.strokeStyle =
+              soreFactor > 0.35
+                ? `rgba(255, 230, 210, ${trailAlpha})`
+                : `rgba(255, 255, 255, ${trailAlpha})`;
             ctx.lineWidth = (1.6 + (1 - ratio) * 3.2) * plane.scale;
             ctx.lineCap = 'round';
             ctx.beginPath();
@@ -586,11 +584,12 @@ export function SkyMotionBackdrop() {
           plane.direction,
           storm,
           nightFactor,
+          soreFactor,
           beaconPhase
         );
       }
 
-      // Rain
+      // 5. Rain during storm
       if (storm > 0.18 && !prefersReducedMotion) {
         const rainIntensity = clamp01((storm - 0.18) / 0.62);
         const activeDrops = Math.floor(raindrops.length * rainIntensity);
@@ -667,16 +666,19 @@ export function SkyMotionBackdrop() {
       />
 
       {/* Live Time / Weather Badge Indicator */}
-      <div className="absolute bottom-4 left-4 z-10 hidden sm:flex items-center gap-2 rounded-full border border-white/20 bg-slate-900/60 px-3 py-1.5 backdrop-blur-md text-[11px] font-medium text-slate-200 shadow-lg">
+      <div className="absolute bottom-4 left-4 z-10 hidden sm:flex items-center gap-2 rounded-full border border-white/20 bg-slate-900/65 px-3 py-1.5 backdrop-blur-md text-[11px] font-medium text-slate-200 shadow-lg">
         <span className="relative flex h-2 w-2">
           <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#D4AF37] opacity-75"></span>
           <span className="relative inline-flex h-2 w-2 rounded-full bg-[#D4AF37]"></span>
         </span>
+        <span className="font-mono font-bold text-amber-300 mr-0.5">{currentTimeStr}</span>
+        <span>·</span>
         <span>
-          {currentPhase === 'Hujan' && '🌧️ Menyambut dengan Hujan & Mendung'}
-          {currentPhase === 'Pagi' && '🌅 Pagi · Suasana Matahari Terbit'}
-          {currentPhase === 'Siang' && '☀️ Siang · Langit Terang & Pesawat Melintas'}
-          {currentPhase === 'Malam' && '🌙 Malam · Bintang Berkelip & Lampu Kabin'}
+          {currentPhase === 'Hujan' && '🌧️ Hujan & Mendung'}
+          {currentPhase === 'Pagi' && '🌅 Pagi · Matahari Terbit'}
+          {currentPhase === 'Siang' && '☀️ Siang · Langit Terang'}
+          {currentPhase === 'Sore' && '🌇 Sore · Sunset Keemasan'}
+          {currentPhase === 'Malam' && '🌙 Malam · Bintang & Lampu Kabin'}
         </span>
       </div>
 

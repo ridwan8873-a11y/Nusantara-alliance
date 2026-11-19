@@ -1,5 +1,6 @@
 import { Trophy } from 'lucide-react';
 import type { OnlinePresenceState } from '../hooks/useOnlinePresence';
+import { AotmSkyClock } from './AotmSkyClock';
 import { OnlineEyeButton } from './OnlineEyeButton';
 
 const WHATSAPP_GROUP_URL =
@@ -27,23 +28,28 @@ export function Navbar({
   return (
     <header className="sticky top-0 z-40 border-b border-white/20 bg-[#0C2D48]/80 backdrop-blur-md">
       <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-3 py-3 sm:gap-8 sm:px-6 sm:py-3.5 lg:px-8">
-        {/* Zone 1: Clean Single-Line Brand Wordmark */}
-        <a
-          href="#airlines-of-the-moon"
-          className="flex min-w-0 shrink items-center gap-2 whitespace-nowrap focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#D4AF37] sm:gap-3"
-        >
-          <div className="h-7 w-7 shrink-0 overflow-hidden rounded border border-white/20 bg-black sm:h-8 sm:w-8">
-            <img
-              src="/assets/alliance-emblem.jpg"
-              alt="Nusantara Alliance"
-              referrerPolicy="no-referrer"
-              className="h-full w-full object-cover"
-            />
-          </div>
-          <span className="truncate font-display text-sm font-semibold tracking-tight text-white sm:text-base">
-            AOTM Nusantara Alliance
-          </span>
-        </a>
+        {/* Zone 1: Clean Single-Line Brand Wordmark + Live Sky Time Clock */}
+        <div className="flex min-w-0 items-center gap-2 sm:gap-3">
+          <a
+            href="#airlines-of-the-moon"
+            className="flex min-w-0 shrink items-center gap-2 whitespace-nowrap focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#D4AF37] sm:gap-3"
+          >
+            <div className="h-7 w-7 shrink-0 overflow-hidden rounded border border-white/20 bg-black sm:h-8 sm:w-8">
+              <img
+                src="/assets/alliance-emblem.jpg"
+                alt="Nusantara Alliance"
+                referrerPolicy="no-referrer"
+                className="h-full w-full object-cover"
+              />
+            </div>
+            <span className="truncate font-display text-sm font-semibold tracking-tight text-white sm:text-base">
+              AOTM Nusantara Alliance
+            </span>
+          </a>
+
+          {/* Clock beside AOTM title */}
+          <AotmSkyClock />
+        </div>
 
         {/* Zone 2: Concise Single-Line Navigation Links */}
         <nav
