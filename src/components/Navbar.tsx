@@ -25,7 +25,7 @@ export function Navbar({
   onGoogleSignIn,
 }: NavbarProps) {
   return (
-    <header className="sticky top-0 z-40 border-b border-white/10 bg-[#080E18]/92 backdrop-blur-md">
+    <header className="sticky top-0 z-40 border-b border-white/20 bg-[#0C2D48]/80 backdrop-blur-md">
       <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-3 py-3 sm:gap-8 sm:px-6 sm:py-3.5 lg:px-8">
         {/* Zone 1: Clean Single-Line Brand Wordmark */}
         <a

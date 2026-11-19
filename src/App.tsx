@@ -4,7 +4,7 @@ import {
   ExternalLink,
   ShieldCheck,
 } from 'lucide-react';
-import runwayBackdropImg from './assets/images/runway_bokeh_backdrop_1794999305269.jpg';
+import brightSkyBackdropImg from './assets/images/bright_sky_aviation_backdrop_1795055898145.jpg';
 import { AirlinesOfTheMoonSection } from './components/AirlinesOfTheMoonSection';
 import { LoadingSplash } from './components/LoadingSplash';
 import { Navbar } from './components/Navbar';
@@ -71,7 +71,7 @@ export default function App() {
   };
 
   return (
-    <div className="relative min-h-screen overflow-x-hidden bg-[#080E18] text-slate-100">
+    <div className="relative min-h-screen overflow-x-hidden bg-sky-200 text-slate-900">
       {showSplash && (
         <LoadingSplash
           onComplete={handleSplashComplete}
@@ -81,19 +81,19 @@ export default function App() {
         />
       )}
 
-      {/* Blurred Airport Runway Lights Backdrop */}
+      {/* Bright Daylight Aviation Sky Backdrop */}
       <div className="pointer-events-none fixed inset-0 z-0 overflow-hidden">
         {!bgError && (
           <img
-            src={runwayBackdropImg}
+            src={brightSkyBackdropImg}
             alt=""
             aria-hidden="true"
             referrerPolicy="no-referrer"
             onError={() => setBgError(true)}
-            className="h-full w-full scale-[1.03] object-cover object-center opacity-50 blur-[2px]"
+            className="h-full w-full scale-[1.02] object-cover object-center opacity-100"
           />
         )}
-        <div className="absolute inset-0 bg-gradient-to-b from-[#080E18]/65 via-[#080E18]/78 to-[#080E18]/92" />
+        <div className="absolute inset-0 bg-gradient-to-b from-sky-900/15 via-transparent to-sky-950/20" />
       </div>
 
       <div className="relative z-10 flex min-h-screen flex-col justify-between">
@@ -115,7 +115,7 @@ export default function App() {
           />
         </main>
 
-        <footer className="border-t border-white/10 bg-[#080E18]">
+        <footer className="border-t border-white/20 bg-[#0C2D48]/85 text-slate-100 backdrop-blur-md">
           <div className="mx-auto flex max-w-6xl flex-col items-start justify-between gap-4 px-4 py-6 sm:flex-row sm:items-center sm:px-6 lg:px-8">
             <div className="flex flex-wrap items-center gap-2.5 text-xs text-slate-400">
               <span className="font-display text-sm font-semibold tracking-tight text-slate-100">
