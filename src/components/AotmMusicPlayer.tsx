@@ -1,7 +1,5 @@
 import { ChangeEvent, useCallback, useEffect, useRef, useState } from 'react';
 import {
-  ChevronDown,
-  ChevronUp,
   Music2,
   Pause,
   Play,
@@ -78,7 +76,6 @@ export function AotmMusicPlayer() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [volume, setVolume] = useState(100); // Langsung keras (100%)
   const [isMuted, setIsMuted] = useState(false);
-  const [minimized, setMinimized] = useState(false);
   const [localTrack, setLocalTrack] = useState<{
     url: string;
     title: string;
@@ -226,7 +223,6 @@ export function AotmMusicPlayer() {
           },
           onStateChange: (event) => {
             if (destroyed) return;
-            // 1 = PLAYING, 2 = PAUSED, 0 = ENDED
             if (event.data === 1) {
               setIsPlaying(true);
               setNeedsGesture(false);
@@ -242,7 +238,6 @@ export function AotmMusicPlayer() {
             } else if (event.data === 2) {
               setIsPlaying(false);
             } else if (event.data === 0) {
-              // Auto-advance seamlessly to the next track in the MCR playlist
               const nextIdx = (trackIndexRef.current + 1) % MCR_PLAYLIST.length;
               trackIndexRef.current = nextIdx;
               fallbackIdxRef.current = 0;
@@ -412,7 +407,7 @@ export function AotmMusicPlayer() {
       {!localTrack && (
         <div
           aria-hidden="true"
-          className="pointer-events-none fixed bottom-0 right-0 -z-50 h-[120px] w-[214px] overflow-hidden opacity-[0.001]"
+          className="pointer-events-none fixed left-0 top-0 -z-50 h-[120px] w-[214px] overflow-hidden opacity-[0.001]"
         >
           <div ref={playerHostRef} />
         </div>
@@ -434,138 +429,135 @@ export function AotmMusicPlayer() {
         />
       )}
 
-      {/* Compact Floating Music Controller */}
-      <div className="fixed bottom-4 right-4 z-[110] max-w-[calc(100vw-2rem)]">
-        <div className="rounded-xl border border-white/20 bg-[#0A1A2F]/90 text-white shadow-xl backdrop-blur-md">
-          {minimized ? (
-            <div className="flex items-center gap-2 px-3 py-2">
+      {/* Clean Top Music Bar (Placed above Hero so it never gets blocked by Netlify badges or footer) */}
+      <div className="rounded-xl border border-white/25 bg-[#0A1A2F]/80 px-3.5 py-2.5 text-white shadow-md backdrop-blur-md sm:px-4">
+        <div className="flex flex-col gap-2.5 lg:flex-row lg:items-center lg:justify-between">
+          {/* Left: Play/Pause + Track Info */}
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-2.5">
               <button
                 type="button"
                 onClick={togglePlayPause}
                 aria-label={isPlaying ? 'Jeda Musik' : 'Putar Musik'}
-                className={`flex h-7 w-7 items-center justify-center rounded-full bg-[#D4AF37] text-[#080E18] transition-transform hover:scale-105 ${
+                className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#D4AF37] text-[#080E18] shadow transition-transform hover:scale-105 hover:bg-[#E5C158] ${
                   !isPlaying && needsGesture ? 'animate-pulse' : ''
                 }`}
               >
                 {isPlaying ? (
-                  <Pause className="h-3.5 w-3.5 fill-current" />
+                  <Pause className="h-4 w-4 fill-current" />
                 ) : (
-                  <Play className="h-3.5 w-3.5 translate-x-0.5 fill-current" />
+                  <Play className="h-4 w-4 translate-x-0.5 fill-current" />
                 )}
               </button>
-              <span className="max-w-[130px] truncate text-xs font-semibold">
-                {activeTitle}
-              </span>
+
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5">
+                  <Music2 className="h-3.5 w-3.5 shrink-0 text-[#E5C158]" />
+                  <p className="truncate text-xs font-bold text-white sm:text-sm">
+                    {activeTitle}
+                  </p>
+                </div>
+                <p className="truncate text-[11px] text-slate-300">
+                  {ytBlocked
+                    ? 'Embed diblokir — pilih file MP3'
+                    : !isPlaying && needsGesture
+                      ? `${activeArtist} · Ketuk Play / layar (Vol 100%)`
+                      : activeArtist}
+                </p>
+              </div>
+            </div>
+
+            {/* Prev / Next + Local MP3 Upload */}
+            <div className="flex shrink-0 items-center gap-1 lg:hidden">
               <button
                 type="button"
-                onClick={() => setMinimized(false)}
-                aria-label="Perluas pemutar musik"
-                className="rounded p-1 text-slate-300 hover:bg-white/10 hover:text-white"
+                onClick={() => selectTrack(trackIndex - 1)}
+                aria-label="Lagu sebelumnya"
+                className="rounded-lg border border-white/10 bg-white/5 p-1.5 text-slate-200 hover:bg-white/10 hover:text-white"
               >
-                <ChevronUp className="h-3.5 w-3.5" />
+                <SkipBack className="h-3.5 w-3.5" />
               </button>
+              <button
+                type="button"
+                onClick={() => selectTrack(trackIndex + 1)}
+                aria-label="Lagu berikutnya"
+                className="rounded-lg border border-white/10 bg-white/5 p-1.5 text-slate-200 hover:bg-white/10 hover:text-white"
+              >
+                <SkipForward className="h-3.5 w-3.5" />
+              </button>
+              <label
+                title="Pilih file lagu MP3 dari perangkat"
+                className="cursor-pointer rounded-lg border border-white/10 bg-white/5 p-1.5 text-slate-200 hover:bg-white/10 hover:text-[#E5C158]"
+              >
+                <Upload className="h-3.5 w-3.5" />
+                <input
+                  type="file"
+                  accept="audio/*"
+                  onChange={handleLocalFilePick}
+                  className="sr-only"
+                />
+              </label>
             </div>
-          ) : (
-            <div className="w-[288px] p-3 sm:w-[312px]">
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex min-w-0 items-center gap-2">
+          </div>
+
+          {/* Right: Track Switcher + Desktop Controls + Volume 100% */}
+          <div className="flex flex-wrap items-center justify-between gap-2.5 border-t border-white/10 pt-2 lg:border-t-0 lg:pt-0">
+            <div className="flex items-center gap-1.5">
+              {MCR_PLAYLIST.map((track, idx) => {
+                const active = !localTrack && trackIndex === idx;
+                return (
                   <button
+                    key={track.id}
                     type="button"
-                    onClick={togglePlayPause}
-                    aria-label={isPlaying ? 'Jeda Musik' : 'Putar Musik'}
-                    className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#D4AF37] text-[#080E18] shadow transition-transform hover:scale-105 hover:bg-[#E5C158] ${
-                      !isPlaying && needsGesture ? 'animate-pulse' : ''
+                    onClick={() => selectTrack(idx)}
+                    className={`rounded-lg border px-2.5 py-1 text-[11px] font-semibold transition-colors whitespace-nowrap ${
+                      active
+                        ? 'border-[#D4AF37] bg-[#D4AF37]/20 text-[#F7E7A9]'
+                        : 'border-white/15 bg-white/5 text-slate-300 hover:border-white/30 hover:text-white'
                     }`}
                   >
-                    {isPlaying ? (
-                      <Pause className="h-4 w-4 fill-current" />
-                    ) : (
-                      <Play className="h-4 w-4 translate-x-0.5 fill-current" />
-                    )}
+                    {idx + 1}. {track.title}
                   </button>
+                );
+              })}
+            </div>
 
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-1.5">
-                      <Music2 className="h-3 w-3 shrink-0 text-[#E5C158]" />
-                      <p className="truncate text-xs font-bold text-white">
-                        {activeTitle}
-                      </p>
-                    </div>
-                    <p className="truncate text-[11px] text-slate-300">
-                      {ytBlocked
-                        ? 'Embed diblokir — pilih file MP3'
-                        : !isPlaying && needsGesture
-                          ? 'Ketuk Play / layar · Vol 100%'
-                          : activeArtist}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex shrink-0 items-center gap-0.5">
-                  <button
-                    type="button"
-                    onClick={() => selectTrack(trackIndex - 1)}
-                    aria-label="Lagu sebelumnya"
-                    title="Lagu sebelumnya"
-                    className="rounded p-1.5 text-slate-300 transition-colors hover:bg-white/10 hover:text-white"
-                  >
-                    <SkipBack className="h-3.5 w-3.5" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => selectTrack(trackIndex + 1)}
-                    aria-label="Lagu berikutnya"
-                    title="Lagu berikutnya"
-                    className="rounded p-1.5 text-slate-300 transition-colors hover:bg-white/10 hover:text-white"
-                  >
-                    <SkipForward className="h-3.5 w-3.5" />
-                  </button>
-                  <label
-                    title="Pilih file lagu MP3 dari perangkat"
-                    className="cursor-pointer rounded p-1.5 text-slate-300 transition-colors hover:bg-white/10 hover:text-[#E5C158]"
-                  >
-                    <Upload className="h-3.5 w-3.5" />
-                    <input
-                      type="file"
-                      accept="audio/*"
-                      onChange={handleLocalFilePick}
-                      className="sr-only"
-                    />
-                  </label>
-                  <button
-                    type="button"
-                    onClick={() => setMinimized(true)}
-                    aria-label="Perkecil pemutar musik"
-                    className="rounded p-1.5 text-slate-300 transition-colors hover:bg-white/10 hover:text-white"
-                  >
-                    <ChevronDown className="h-3.5 w-3.5" />
-                  </button>
-                </div>
+            <div className="flex items-center gap-2">
+              <div className="hidden items-center gap-1 lg:flex">
+                <button
+                  type="button"
+                  onClick={() => selectTrack(trackIndex - 1)}
+                  aria-label="Lagu sebelumnya"
+                  title="Lagu sebelumnya"
+                  className="rounded-lg border border-white/10 bg-white/5 p-1.5 text-slate-200 transition-colors hover:bg-white/10 hover:text-white"
+                >
+                  <SkipBack className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => selectTrack(trackIndex + 1)}
+                  aria-label="Lagu berikutnya"
+                  title="Lagu berikutnya"
+                  className="rounded-lg border border-white/10 bg-white/5 p-1.5 text-slate-200 transition-colors hover:bg-white/10 hover:text-white"
+                >
+                  <SkipForward className="h-3.5 w-3.5" />
+                </button>
+                <label
+                  title="Pilih file lagu MP3 dari perangkat"
+                  className="cursor-pointer rounded-lg border border-white/10 bg-white/5 p-1.5 text-slate-200 transition-colors hover:bg-white/10 hover:text-[#E5C158]"
+                >
+                  <Upload className="h-3.5 w-3.5" />
+                  <input
+                    type="file"
+                    accept="audio/*"
+                    onChange={handleLocalFilePick}
+                    className="sr-only"
+                  />
+                </label>
               </div>
 
-              {/* 2-Song Playlist Selector (Disenchanted & Cancer) */}
-              <div className="mt-2.5 grid grid-cols-2 gap-1.5">
-                {MCR_PLAYLIST.map((track, idx) => {
-                  const active = !localTrack && trackIndex === idx;
-                  return (
-                    <button
-                      key={track.id}
-                      type="button"
-                      onClick={() => selectTrack(idx)}
-                      className={`truncate rounded-md border px-2 py-1 text-left text-[11px] font-medium transition-colors ${
-                        active
-                          ? 'border-[#D4AF37] bg-[#D4AF37]/20 text-[#F7E7A9]'
-                          : 'border-white/10 bg-white/5 text-slate-300 hover:border-white/25 hover:text-white'
-                      }`}
-                    >
-                      {idx + 1}. {track.title}
-                    </button>
-                  );
-                })}
-              </div>
-
-              {/* Volume Control (Default 100% / Langsung Keras) */}
-              <div className="mt-2.5 flex items-center gap-2 border-t border-white/10 pt-2">
+              {/* Volume Control (Default 100%) */}
+              <div className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-black/25 px-2 py-1">
                 <button
                   type="button"
                   onClick={toggleMute}
@@ -585,14 +577,14 @@ export function AotmMusicPlayer() {
                   value={isMuted ? 0 : volume}
                   onChange={handleVolumeChange}
                   aria-label="Volume musik"
-                  className="h-1.5 w-full cursor-pointer accent-[#D4AF37]"
+                  className="h-1.5 w-20 cursor-pointer accent-[#D4AF37] sm:w-24"
                 />
                 <span className="w-8 text-right font-mono text-[10px] font-semibold text-amber-300 tabular-nums">
                   {isMuted ? 0 : volume}%
                 </span>
               </div>
             </div>
-          )}
+          </div>
         </div>
       </div>
     </>

@@ -95,7 +95,8 @@ export default function App() {
           onGoogleSignIn={handleGoogleSignIn}
         />
 
-        <main className="mx-auto w-full max-w-6xl space-y-12 px-4 py-8 sm:px-6 sm:py-12 lg:px-8">
+        <main className="mx-auto w-full max-w-6xl space-y-6 px-4 py-6 sm:px-6 sm:py-8 lg:px-8">
+          <AotmMusicPlayer />
           {/* Main Focus: AOTM Nusantara Alliance Official Championship */}
           <AirlinesOfTheMoonSection
             user={user}
@@ -138,7 +139,6 @@ export default function App() {
           </div>
         </footer>
       </div>
-      <AotmMusicPlayer />
     </div>
   );
 }
