@@ -15,26 +15,37 @@ interface PlaylistTrack {
   title: string;
   artist: string;
   videoIds: string[];
+  itunesQuery: string;
 }
 
-const MCR_PLAYLIST: PlaylistTrack[] = [
+const AOTM_PLAYLIST: PlaylistTrack[] = [
   {
     id: 'disenchanted',
     title: 'Disenchanted',
     artist: 'My Chemical Romance',
     videoIds: ['U8csusXxJjA', 'JIReuEmDgn4', 'W0a-x3vqHb0'],
+    itunesQuery: 'My Chemical Romance Disenchanted',
   },
   {
     id: 'cancer',
     title: 'Cancer',
     artist: 'My Chemical Romance',
     videoIds: ['yhMP6VLObZE', 'yTuIDYnRUYs', 'EdKu5tdvaa0'],
+    itunesQuery: 'My Chemical Romance Cancer',
   },
   {
     id: 'dinda',
     title: 'Dinda',
     artist: 'Masdo',
     videoIds: ['13YRltFWIps'],
+    itunesQuery: 'Masdo Dinda',
+  },
+  {
+    id: 'the-one-that-got-away',
+    title: 'The One That Got Away',
+    artist: 'Katy Perry',
+    videoIds: ['Ahha3Cqe_fk'],
+    itunesQuery: 'Katy Perry The One That Got Away',
   },
 ];
 
@@ -59,6 +70,7 @@ interface YTNamespace {
     options: {
       height?: string | number;
       width?: string | number;
+      host?: string;
       videoId: string;
       playerVars?: Record<string, string | number>;
       events?: {
@@ -77,6 +89,22 @@ declare global {
   }
 }
 
+async function fetchDirectAudioFallback(query: string): Promise<string | null> {
+  try {
+    const res = await fetch(
+      `https://itunes.apple.com/search?term=${encodeURIComponent(query)}&media=music&entity=song&limit=1`
+    );
+    if (!res.ok) return null;
+    const data = (await res.json()) as {
+      results?: Array<{ previewUrl?: string }>;
+    };
+    const url = data.results?.[0]?.previewUrl;
+    return typeof url === 'string' && url.startsWith('https://') ? url : null;
+  } catch {
+    return null;
+  }
+}
+
 export function AotmMusicPlayer() {
   const [trackIndex, setTrackIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -86,20 +114,24 @@ export function AotmMusicPlayer() {
     url: string;
     title: string;
   } | null>(null);
+  const [fallbackAudioUrl, setFallbackAudioUrl] = useState<string | null>(null);
+  const [loadingFallback, setLoadingFallback] = useState(false);
   const [needsGesture, setNeedsGesture] = useState(true);
-  const [ytBlocked, setYtBlocked] = useState(false);
+  const [audioUnavailable, setAudioUnavailable] = useState(false);
 
   const playerHostRef = useRef<HTMLDivElement | null>(null);
   const ytPlayerRef = useRef<YTPlayer | null>(null);
   const ytReadyRef = useRef(false);
+  const ytGloballyBlockedRef = useRef(false);
   const trackIndexRef = useRef(trackIndex);
   const fallbackIdxRef = useRef(0);
   const audioElRef = useRef<HTMLAudioElement | null>(null);
   const userPausedRef = useRef(false);
   const volumeRef = useRef(volume);
   const mutedRef = useRef(isMuted);
+  const cachedFallbackUrlsRef = useRef<Record<string, string>>({});
 
-  const currentTrack = MCR_PLAYLIST[trackIndex] ?? MCR_PLAYLIST[0];
+  const currentTrack = AOTM_PLAYLIST[trackIndex] ?? AOTM_PLAYLIST[0];
 
   useEffect(() => {
     trackIndexRef.current = trackIndex;
@@ -129,23 +161,85 @@ export function AotmMusicPlayer() {
     }
   }, []);
 
+  const activateDirectAudioFallback = useCallback(
+    async (track: PlaylistTrack, autoPlayAfterLoad: boolean) => {
+      ytGloballyBlockedRef.current = true;
+      setLoadingFallback(true);
+      setAudioUnavailable(false);
+
+      if (ytPlayerRef.current && ytReadyRef.current) {
+        try {
+          ytPlayerRef.current.pauseVideo();
+        } catch {
+          // Ignore
+        }
+      }
+
+      let streamUrl: string | null = cachedFallbackUrlsRef.current[track.id] || null;
+      if (!streamUrl) {
+        streamUrl = await fetchDirectAudioFallback(track.itunesQuery);
+        if (streamUrl) {
+          cachedFallbackUrlsRef.current[track.id] = streamUrl;
+        }
+      }
+
+      setLoadingFallback(false);
+
+      if (!streamUrl) {
+        setAudioUnavailable(true);
+        setIsPlaying(false);
+        return;
+      }
+
+      setFallbackAudioUrl(streamUrl);
+      if (autoPlayAfterLoad && !userPausedRef.current) {
+        window.setTimeout(() => {
+          if (!audioElRef.current) return;
+          audioElRef.current.volume = Math.max(
+            0,
+            Math.min(1, volumeRef.current / 100)
+          );
+          audioElRef.current.muted = mutedRef.current;
+          audioElRef.current
+            .play()
+            .then(() => {
+              setIsPlaying(true);
+              setNeedsGesture(false);
+            })
+            .catch(() => {
+              setNeedsGesture(true);
+              setIsPlaying(false);
+            });
+        }, 50);
+      }
+    },
+    []
+  );
+
   const selectTrack = useCallback(
     (nextIdx: number) => {
       const normalized =
-        ((nextIdx % MCR_PLAYLIST.length) + MCR_PLAYLIST.length) %
-        MCR_PLAYLIST.length;
-      const targetTrack = MCR_PLAYLIST[normalized];
+        ((nextIdx % AOTM_PLAYLIST.length) + AOTM_PLAYLIST.length) %
+        AOTM_PLAYLIST.length;
+      const targetTrack = AOTM_PLAYLIST[normalized];
       trackIndexRef.current = normalized;
       fallbackIdxRef.current = 0;
       userPausedRef.current = false;
+
       setLocalTrack((prev) => {
         if (prev) URL.revokeObjectURL(prev.url);
         return null;
       });
       setTrackIndex(normalized);
-      setYtBlocked(false);
+      setAudioUnavailable(false);
       setNeedsGesture(false);
 
+      if (ytGloballyBlockedRef.current) {
+        void activateDirectAudioFallback(targetTrack, true);
+        return;
+      }
+
+      setFallbackAudioUrl(null);
       if (ytPlayerRef.current && ytReadyRef.current) {
         try {
           applyLoudVolume(volumeRef.current, mutedRef.current);
@@ -153,23 +247,29 @@ export function AotmMusicPlayer() {
           ytPlayerRef.current.playVideo();
           setIsPlaying(true);
         } catch {
-          // Will play once ready
+          void activateDirectAudioFallback(targetTrack, true);
         }
       }
     },
-    [applyLoudVolume]
+    [activateDirectAudioFallback, applyLoudVolume]
   );
 
   const startPlayback = useCallback(() => {
     userPausedRef.current = false;
     setNeedsGesture(false);
 
-    if (localTrack && audioElRef.current) {
+    if ((localTrack || fallbackAudioUrl) && audioElRef.current) {
       applyLoudVolume(volumeRef.current, mutedRef.current);
       audioElRef.current
         .play()
         .then(() => setIsPlaying(true))
         .catch(() => setNeedsGesture(true));
+      return;
+    }
+
+    if (ytGloballyBlockedRef.current) {
+      const active = AOTM_PLAYLIST[trackIndexRef.current] ?? AOTM_PLAYLIST[0];
+      void activateDirectAudioFallback(active, true);
       return;
     }
 
@@ -182,38 +282,43 @@ export function AotmMusicPlayer() {
         setNeedsGesture(true);
       }
     }
-  }, [applyLoudVolume, localTrack]);
+  }, [activateDirectAudioFallback, applyLoudVolume, fallbackAudioUrl, localTrack]);
 
-  // Initialize YouTube IFrame API player
+  // Initialize YouTube IFrame API player (with automatic fallback to direct audio stream if blocked)
   useEffect(() => {
-    if (localTrack) return;
+    if (localTrack || fallbackAudioUrl) return;
 
     let destroyed = false;
+    let loadTimeoutId = 0;
 
     const mountPlayer = () => {
       if (destroyed || !playerHostRef.current || !window.YT?.Player) return;
       if (ytPlayerRef.current) return;
 
       const initialVideoId =
-        MCR_PLAYLIST[trackIndexRef.current]?.videoIds[0] ??
-        MCR_PLAYLIST[0].videoIds[0];
+        AOTM_PLAYLIST[trackIndexRef.current]?.videoIds[0] ??
+        AOTM_PLAYLIST[0].videoIds[0];
 
       ytPlayerRef.current = new window.YT.Player(playerHostRef.current, {
         height: '120',
         width: '214',
+        host: 'https://www.youtube-nocookie.com',
         videoId: initialVideoId,
         playerVars: {
           autoplay: 1,
           controls: 0,
           disablekb: 1,
+          enablejsapi: 1,
           fs: 0,
           modestbranding: 1,
+          origin: window.location.origin,
           playsinline: 1,
           rel: 0,
         },
         events: {
           onReady: (event) => {
             if (destroyed) return;
+            window.clearTimeout(loadTimeoutId);
             ytReadyRef.current = true;
             try {
               if (!mutedRef.current) {
@@ -232,7 +337,7 @@ export function AotmMusicPlayer() {
             if (event.data === 1) {
               setIsPlaying(true);
               setNeedsGesture(false);
-              setYtBlocked(false);
+              setAudioUnavailable(false);
               try {
                 if (!mutedRef.current) {
                   event.target.unMute();
@@ -244,38 +349,47 @@ export function AotmMusicPlayer() {
             } else if (event.data === 2) {
               setIsPlaying(false);
             } else if (event.data === 0) {
-              const nextIdx = (trackIndexRef.current + 1) % MCR_PLAYLIST.length;
+              const nextIdx = (trackIndexRef.current + 1) % AOTM_PLAYLIST.length;
               trackIndexRef.current = nextIdx;
               fallbackIdxRef.current = 0;
               setTrackIndex(nextIdx);
               try {
-                event.target.loadVideoById(MCR_PLAYLIST[nextIdx].videoIds[0]);
+                event.target.loadVideoById(AOTM_PLAYLIST[nextIdx].videoIds[0]);
                 event.target.playVideo();
               } catch {
-                setIsPlaying(false);
+                void activateDirectAudioFallback(AOTM_PLAYLIST[nextIdx], true);
               }
             }
           },
           onError: () => {
             if (destroyed) return;
             const activeTrack =
-              MCR_PLAYLIST[trackIndexRef.current] ?? MCR_PLAYLIST[0];
+              AOTM_PLAYLIST[trackIndexRef.current] ?? AOTM_PLAYLIST[0];
             if (fallbackIdxRef.current < activeTrack.videoIds.length - 1) {
               fallbackIdxRef.current += 1;
               const nextId = activeTrack.videoIds[fallbackIdxRef.current];
               try {
                 ytPlayerRef.current?.loadVideoById(nextId);
               } catch {
-                setYtBlocked(true);
+                void activateDirectAudioFallback(activeTrack, !userPausedRef.current);
               }
             } else {
-              setYtBlocked(true);
-              setIsPlaying(false);
+              // All YouTube embed candidates blocked -> seamlessly fall back to direct studio audio stream
+              void activateDirectAudioFallback(activeTrack, !userPausedRef.current);
             }
           },
         },
       });
     };
+
+    // If YouTube script is blocked by network/firewall within 4.5s, fall back cleanly to direct audio stream
+    loadTimeoutId = window.setTimeout(() => {
+      if (!destroyed && !ytReadyRef.current) {
+        const activeTrack =
+          AOTM_PLAYLIST[trackIndexRef.current] ?? AOTM_PLAYLIST[0];
+        void activateDirectAudioFallback(activeTrack, !userPausedRef.current);
+      }
+    }, 4500);
 
     if (window.YT?.Player) {
       mountPlayer();
@@ -293,12 +407,20 @@ export function AotmMusicPlayer() {
         const tag = document.createElement('script');
         tag.src = 'https://www.youtube.com/iframe_api';
         tag.async = true;
+        tag.onerror = () => {
+          if (!destroyed) {
+            const activeTrack =
+              AOTM_PLAYLIST[trackIndexRef.current] ?? AOTM_PLAYLIST[0];
+            void activateDirectAudioFallback(activeTrack, !userPausedRef.current);
+          }
+        };
         document.head.appendChild(tag);
       }
     }
 
     return () => {
       destroyed = true;
+      window.clearTimeout(loadTimeoutId);
       ytReadyRef.current = false;
       if (ytPlayerRef.current) {
         try {
@@ -309,7 +431,7 @@ export function AotmMusicPlayer() {
         ytPlayerRef.current = null;
       }
     };
-  }, [localTrack]);
+  }, [activateDirectAudioFallback, fallbackAudioUrl, localTrack]);
 
   // Unlock loud audio on user interaction until playback succeeds or user pauses
   useEffect(() => {
@@ -342,7 +464,7 @@ export function AotmMusicPlayer() {
   const togglePlayPause = () => {
     if (isPlaying) {
       userPausedRef.current = true;
-      if (localTrack && audioElRef.current) {
+      if ((localTrack || fallbackAudioUrl) && audioElRef.current) {
         audioElRef.current.pause();
       } else if (ytPlayerRef.current && ytReadyRef.current) {
         ytPlayerRef.current.pauseVideo();
@@ -375,8 +497,9 @@ export function AotmMusicPlayer() {
     }
     const url = URL.createObjectURL(file);
     const cleanName = file.name.replace(/\.[^/.]+$/, '');
+    setFallbackAudioUrl(null);
     setLocalTrack({ url, title: cleanName });
-    setYtBlocked(false);
+    setAudioUnavailable(false);
     setVolume(100);
     setIsMuted(false);
     userPausedRef.current = false;
@@ -406,11 +529,12 @@ export function AotmMusicPlayer() {
 
   const activeTitle = localTrack ? localTrack.title : currentTrack.title;
   const activeArtist = localTrack ? 'Musik Lokal' : currentTrack.artist;
+  const audioSrc = localTrack ? localTrack.url : fallbackAudioUrl;
 
   return (
     <>
       {/* Hidden-but-rendered YouTube audio container */}
-      {!localTrack && (
+      {!localTrack && !fallbackAudioUrl && (
         <div
           aria-hidden="true"
           className="pointer-events-none fixed left-0 top-0 -z-50 h-[120px] w-[214px] overflow-hidden opacity-[0.001]"
@@ -419,14 +543,19 @@ export function AotmMusicPlayer() {
         </div>
       )}
 
-      {/* Local Audio element if user selects custom MP3 */}
-      {localTrack && (
+      {/* Direct Audio element (for local MP3 or unblocked studio audio fallback) */}
+      {audioSrc && (
         <audio
           ref={audioElRef}
-          src={localTrack.url}
-          loop
+          src={audioSrc}
+          loop={Boolean(localTrack)}
           autoPlay
           playsInline
+          onEnded={() => {
+            if (!localTrack) {
+              selectTrack(trackIndex + 1);
+            }
+          }}
           onPlay={() => {
             setIsPlaying(true);
             setNeedsGesture(false);
@@ -464,11 +593,13 @@ export function AotmMusicPlayer() {
                   </p>
                 </div>
                 <p className="truncate text-[11px] text-slate-300">
-                  {ytBlocked
-                    ? 'Embed diblokir — pilih file MP3'
-                    : !isPlaying && needsGesture
-                      ? `${activeArtist} · Ketuk Play / layar (Vol 100%)`
-                      : activeArtist}
+                  {loadingFallback
+                    ? 'Memuat audio langsung...'
+                    : audioUnavailable
+                      ? 'Audio tidak tersedia — pilih file MP3'
+                      : !isPlaying && needsGesture
+                        ? `${activeArtist} · Ketuk Play / layar (Vol 100%)`
+                        : activeArtist}
                 </p>
               </div>
             </div>
@@ -509,7 +640,7 @@ export function AotmMusicPlayer() {
           {/* Right: Track Switcher + Desktop Controls + Volume 100% */}
           <div className="flex flex-wrap items-center justify-between gap-2.5 border-t border-white/10 pt-2 lg:border-t-0 lg:pt-0">
             <div className="flex flex-wrap items-center gap-1.5">
-              {MCR_PLAYLIST.map((track, idx) => {
+              {AOTM_PLAYLIST.map((track, idx) => {
                 const active = !localTrack && trackIndex === idx;
                 return (
                   <button
