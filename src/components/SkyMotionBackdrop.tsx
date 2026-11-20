@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import brightSkyBackdropImg from '../assets/images/bright_sky_aviation_backdrop_1795055898145.jpg';
 import {
-  CYCLE_DURATION_SEC,
-  getSkyWeatherState,
+  getSkyTimeState,
+  pickRandomWeather,
   SKY_START_TIME,
-  type SkyPhase,
+  type WeatherKind,
 } from '../lib/skyTime';
 
 interface CloudPuff {
@@ -35,6 +35,17 @@ interface RainDrop {
   thickness: number;
 }
 
+interface SnowFlake {
+  x: number;
+  y: number;
+  radius: number;
+  speedY: number;
+  driftAmp: number;
+  driftFreq: number;
+  phase: number;
+  alpha: number;
+}
+
 interface Star {
   x: number;
   y: number;
@@ -47,6 +58,11 @@ function clamp01(v: number): number {
   return Math.max(0, Math.min(1, v));
 }
 
+function moveToward(current: number, target: number, maxStep: number): number {
+  if (Math.abs(target - current) <= maxStep) return target;
+  return current + Math.sign(target - current) * maxStep;
+}
+
 function drawCommercialAirliner(
   ctx: CanvasRenderingContext2D,
   x: number,
@@ -54,7 +70,8 @@ function drawCommercialAirliner(
   angle: number,
   scale: number,
   direction: 1 | -1,
-  storm: number,
+  rainFactor: number,
+  snowFactor: number,
   nightFactor: number,
   soreFactor: number,
   beaconPhase: number
@@ -108,7 +125,7 @@ function drawCommercialAirliner(
   ctx.closePath();
   ctx.fill();
 
-  // Fuselage (warm tint at sunset / slight cool gray at night)
+  // Fuselage
   ctx.fillStyle =
     soreFactor > 0.35
       ? '#FFF5EB'
@@ -157,9 +174,9 @@ function drawCommercialAirliner(
   ctx.closePath();
   ctx.fill();
 
-  // Cabin windows (bright yellow/amber glow at night, storm, or sore)
+  // Cabin windows (lit warm yellow during night, rain, snow, or dusk)
   ctx.fillStyle =
-    nightFactor > 0.3 || storm > 0.3 || soreFactor > 0.4
+    nightFactor > 0.3 || rainFactor > 0.3 || snowFactor > 0.3 || soreFactor > 0.4
       ? '#FDE68A'
       : '#1E293B';
   for (let wx = -32; wx <= 28; wx += 4.6) {
@@ -187,9 +204,10 @@ function drawCommercialAirliner(
   ctx.fillStyle = '#CBD5E1';
   ctx.fillRect(11, 8.8, 3, 5.4);
 
-  // Headlight beam during night, storm, or sore
-  if (nightFactor > 0.35 || storm > 0.25 || soreFactor > 0.5) {
-    const beamAlpha = Math.max(nightFactor, storm, soreFactor * 0.7) * 0.35;
+  // Headlight beam during night, rain, snow, or dusk
+  const weatherVisibility = Math.max(nightFactor, rainFactor, snowFactor * 0.85, soreFactor * 0.7);
+  if (weatherVisibility > 0.25) {
+    const beamAlpha = weatherVisibility * 0.35;
     const beamGrad = ctx.createLinearGradient(56, 3, 150, 15);
     beamGrad.addColorStop(0, `rgba(255, 249, 214, ${beamAlpha})`);
     beamGrad.addColorStop(1, 'rgba(255, 249, 214, 0)');
@@ -293,13 +311,24 @@ export function SkyMotionBackdrop() {
       },
     ];
 
-    const raindrops: RainDrop[] = Array.from({ length: 170 }, () => ({
+    const raindrops: RainDrop[] = Array.from({ length: 175 }, () => ({
       x: Math.random() * (width + 200) - 100,
       y: Math.random() * height,
       len: 16 + Math.random() * 24,
       speed: 620 + Math.random() * 420,
       alpha: 0.28 + Math.random() * 0.42,
       thickness: 1 + Math.random() * 0.9,
+    }));
+
+    const snowflakes: SnowFlake[] = Array.from({ length: 185 }, () => ({
+      x: Math.random() * width,
+      y: Math.random() * height,
+      radius: 1.6 + Math.random() * 3.4,
+      speedY: 42 + Math.random() * 68,
+      driftAmp: 16 + Math.random() * 28,
+      driftFreq: 0.7 + Math.random() * 1.1,
+      phase: Math.random() * Math.PI * 2,
+      alpha: 0.45 + Math.random() * 0.5,
     }));
 
     const stars: Star[] = Array.from({ length: 90 }, () => ({
@@ -310,6 +339,16 @@ export function SkyMotionBackdrop() {
       baseAlpha: 0.3 + Math.random() * 0.6,
     }));
 
+    // Random weather scheduler (switches randomly between cerah, mendung, hujan, salju)
+    let activeWeather: WeatherKind = pickRandomWeather();
+    let nextWeatherSwitchSec = 6 + Math.random() * 5; // 6–11 seconds per weather
+
+    // Smoothly interpolated weather intensities (0..1)
+    let overcastFactor =
+      activeWeather === 'mendung' || activeWeather === 'hujan' ? 1 : activeWeather === 'salju' ? 0.55 : 0;
+    let rainFactor = activeWeather === 'hujan' ? 1 : 0;
+    let snowFactor = activeWeather === 'salju' ? 1 : 0;
+
     let rafId = 0;
     let lastTime = performance.now();
 
@@ -318,26 +357,48 @@ export function SkyMotionBackdrop() {
       lastTime = now;
       const elapsedSec = (Date.now() - SKY_START_TIME) / 1000;
 
-      const weather = getSkyWeatherState(elapsedSec);
-      const { storm, morningFactor, soreFactor, nightFactor } = weather;
+      // Advance random weather when timer hits
+      if (!prefersReducedMotion && elapsedSec >= nextWeatherSwitchSec) {
+        activeWeather = pickRandomWeather(activeWeather);
+        nextWeatherSwitchSec = elapsedSec + 6.5 + Math.random() * 5.5;
+      }
 
-      // Update ambient gradient tint smoothly
+      const targetOvercast =
+        activeWeather === 'mendung' || activeWeather === 'hujan'
+          ? 1
+          : activeWeather === 'salju'
+            ? 0.55
+            : 0;
+      const targetRain = activeWeather === 'hujan' ? 1 : 0;
+      const targetSnow = activeWeather === 'salju' ? 1 : 0;
+
+      const weatherRampSpeed = dt * 0.55; // Smooth ~1.8s transition
+      overcastFactor = moveToward(overcastFactor, targetOvercast, weatherRampSpeed);
+      rainFactor = moveToward(rainFactor, targetRain, weatherRampSpeed);
+      snowFactor = moveToward(snowFactor, targetSnow, weatherRampSpeed);
+
+      const timeState = getSkyTimeState(elapsedSec);
+      const { morningFactor, soreFactor, nightFactor } = timeState;
+
+      // Ambient gradient tint combining time of day + random weather
       if (tintRef.current) {
         if (nightFactor > 0.05) {
-          tintRef.current.style.background = `linear-gradient(to bottom, rgba(10, 15, 30, ${0.82 * nightFactor}), rgba(5, 8, 20, ${0.9 * nightFactor}))`;
+          tintRef.current.style.background = `linear-gradient(to bottom, rgba(10, 15, 32, ${0.84 * nightFactor}), rgba(5, 8, 22, ${0.9 * nightFactor}))`;
           tintRef.current.style.opacity = String(nightFactor);
+        } else if (rainFactor > 0.1 || overcastFactor > 0.45) {
+          const stormStrength = Math.max(rainFactor, overcastFactor * 0.85);
+          tintRef.current.style.background = `linear-gradient(to bottom, rgba(51, 65, 85, ${0.78 * stormStrength}), rgba(30, 41, 59, ${0.85 * stormStrength}))`;
+          tintRef.current.style.opacity = String(stormStrength * 0.88);
+        } else if (snowFactor > 0.1) {
+          // Cool crisp winter frost tint
+          tintRef.current.style.background = `linear-gradient(to bottom, rgba(148, 178, 212, ${0.52 * snowFactor}), rgba(203, 222, 240, ${0.42 * snowFactor}))`;
+          tintRef.current.style.opacity = String(snowFactor);
         } else if (soreFactor > 0.05) {
-          // Warm sunset dusk tint
-          tintRef.current.style.background = `linear-gradient(to bottom, rgba(225, 29, 72, ${0.35 * soreFactor}), rgba(245, 158, 11, ${0.45 * soreFactor}), rgba(30, 58, 138, ${0.5 * soreFactor}))`;
+          tintRef.current.style.background = `linear-gradient(to bottom, rgba(225, 29, 72, ${0.35 * soreFactor}), rgba(245, 158, 11, ${0.45 * soreFactor}), rgba(30, 58, 138, ${0.48 * soreFactor}))`;
           tintRef.current.style.opacity = String(soreFactor);
         } else if (morningFactor > 0.05) {
-          // Sunrise amber gold
-          tintRef.current.style.background = `linear-gradient(to bottom, rgba(217, 119, 6, ${0.38 * morningFactor}), rgba(30, 58, 138, ${0.45 * morningFactor}))`;
+          tintRef.current.style.background = `linear-gradient(to bottom, rgba(217, 119, 6, ${0.36 * morningFactor}), rgba(30, 58, 138, ${0.42 * morningFactor}))`;
           tintRef.current.style.opacity = String(morningFactor);
-        } else if (storm > 0.05) {
-          // Storm slate
-          tintRef.current.style.background = `linear-gradient(to bottom, rgba(51, 65, 85, ${0.82 * storm}), rgba(30, 41, 59, ${0.88 * storm}))`;
-          tintRef.current.style.opacity = String(storm * 0.85);
         } else {
           tintRef.current.style.opacity = '0';
         }
@@ -345,10 +406,11 @@ export function SkyMotionBackdrop() {
 
       ctx.clearRect(0, 0, width, height);
 
-      // 1. Stars at Night
-      if (nightFactor > 0.05) {
+      // 1. Stars at Night (dimmed if overcast/rain/snow covers the sky)
+      const clearNight = nightFactor * clamp01(1 - overcastFactor * 0.85);
+      if (clearNight > 0.05) {
         ctx.save();
-        ctx.globalAlpha = nightFactor;
+        ctx.globalAlpha = clearNight;
         for (const star of stars) {
           const alpha =
             star.baseAlpha *
@@ -361,9 +423,9 @@ export function SkyMotionBackdrop() {
         ctx.restore();
       }
 
-      // 2. Sunlight / Moon / Sunset Glow
-      if (soreFactor > 0.05) {
-        // Sunset radiance low on the western sky
+      // 2. Sunlight / Moon / Sunset Glow (softened during overcast/rain)
+      const skyClarity = clamp01(1 - overcastFactor * 0.75);
+      if (soreFactor > 0.05 && skyClarity > 0.05) {
         const sunsetGrad = ctx.createRadialGradient(
           width * 0.72,
           height * 0.55,
@@ -372,13 +434,12 @@ export function SkyMotionBackdrop() {
           height * 0.55,
           width * 0.65
         );
-        sunsetGrad.addColorStop(0, `rgba(255, 125, 45, ${0.55 * soreFactor})`);
-        sunsetGrad.addColorStop(0.35, `rgba(244, 63, 94, ${0.35 * soreFactor})`);
+        sunsetGrad.addColorStop(0, `rgba(255, 125, 45, ${0.55 * soreFactor * skyClarity})`);
+        sunsetGrad.addColorStop(0.35, `rgba(244, 63, 94, ${0.35 * soreFactor * skyClarity})`);
         sunsetGrad.addColorStop(1, 'rgba(244, 63, 94, 0)');
         ctx.fillStyle = sunsetGrad;
         ctx.fillRect(0, 0, width, height);
-      } else if (morningFactor > 0.05) {
-        // Sunrise golden glow
+      } else if (morningFactor > 0.05 && skyClarity > 0.05) {
         const sunGrad = ctx.createRadialGradient(
           width * 0.15,
           height * 0.22,
@@ -387,13 +448,12 @@ export function SkyMotionBackdrop() {
           height * 0.22,
           width * 0.55
         );
-        sunGrad.addColorStop(0, `rgba(255, 200, 87, ${0.55 * morningFactor})`);
-        sunGrad.addColorStop(0.5, `rgba(245, 158, 11, ${0.25 * morningFactor})`);
+        sunGrad.addColorStop(0, `rgba(255, 200, 87, ${0.55 * morningFactor * skyClarity})`);
+        sunGrad.addColorStop(0.5, `rgba(245, 158, 11, ${0.25 * morningFactor * skyClarity})`);
         sunGrad.addColorStop(1, 'rgba(245, 158, 11, 0)');
         ctx.fillStyle = sunGrad;
         ctx.fillRect(0, 0, width, height);
-      } else if (nightFactor > 0.05) {
-        // Moonlight glow
+      } else if (nightFactor > 0.05 && skyClarity > 0.05) {
         const moonGrad = ctx.createRadialGradient(
           width * 0.85,
           height * 0.15,
@@ -402,42 +462,43 @@ export function SkyMotionBackdrop() {
           height * 0.15,
           width * 0.35
         );
-        moonGrad.addColorStop(0, `rgba(224, 242, 254, ${0.35 * nightFactor})`);
+        moonGrad.addColorStop(0, `rgba(224, 242, 254, ${0.35 * nightFactor * skyClarity})`);
         moonGrad.addColorStop(1, 'rgba(224, 242, 254, 0)');
         ctx.fillStyle = moonGrad;
         ctx.fillRect(0, 0, width, height);
-      } else if (storm < 0.2) {
-        // Siang sunbeams
-        const sunStrength = (1 - storm) * (1 - morningFactor) * (1 - soreFactor) * (1 - nightFactor);
-        const pulse = 0.5 + 0.5 * Math.sin(now * 0.0005);
-        const beamGrad = ctx.createRadialGradient(
-          width * 0.08,
-          height * 0.06,
-          10,
-          width * 0.24,
-          height * 0.2,
-          Math.max(width, height) * 0.75
-        );
-        beamGrad.addColorStop(0, `rgba(255, 252, 235, ${(0.24 + pulse * 0.08) * sunStrength})`);
-        beamGrad.addColorStop(0.45, `rgba(224, 244, 255, ${(0.1 + pulse * 0.04) * sunStrength})`);
-        beamGrad.addColorStop(1, 'rgba(255, 255, 255, 0)');
-        ctx.fillStyle = beamGrad;
-        ctx.fillRect(0, 0, width, height);
+      } else if (skyClarity > 0.2) {
+        const sunStrength = (1 - morningFactor) * (1 - soreFactor) * (1 - nightFactor) * skyClarity;
+        if (sunStrength > 0.02) {
+          const pulse = 0.5 + 0.5 * Math.sin(now * 0.0005);
+          const beamGrad = ctx.createRadialGradient(
+            width * 0.08,
+            height * 0.06,
+            10,
+            width * 0.24,
+            height * 0.2,
+            Math.max(width, height) * 0.75
+          );
+          beamGrad.addColorStop(0, `rgba(255, 252, 235, ${(0.24 + pulse * 0.08) * sunStrength})`);
+          beamGrad.addColorStop(0.45, `rgba(224, 244, 255, ${(0.1 + pulse * 0.04) * sunStrength})`);
+          beamGrad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+          ctx.fillStyle = beamGrad;
+          ctx.fillRect(0, 0, width, height);
+        }
       }
 
-      // Lightning flash during storm
+      // Subtle lightning during heavy rain
       let lightningGlow = 0;
-      if (storm > 0.75) {
+      if (rainFactor > 0.7) {
         const flashTick = (elapsedSec * 1.8) % 6.5;
         if (flashTick > 6.2 && flashTick < 6.38) {
-          lightningGlow = 0.25;
+          lightningGlow = 0.25 * rainFactor;
         }
       }
 
       // 3. Clouds
       for (const cloud of clouds) {
         if (!prefersReducedMotion) {
-          const speedBoost = 1 + storm * 0.9;
+          const speedBoost = 1 + overcastFactor * 0.85;
           cloud.x += cloud.speed * speedBoost * dt;
           if (cloud.x - cloud.width * 0.65 > width) {
             cloud.x = -cloud.width * 0.65;
@@ -445,8 +506,6 @@ export function SkyMotionBackdrop() {
         }
 
         const cy = height * cloud.yRatio;
-
-        // Cloud color blending across all phases
         let rCenter = 255;
         let gCenter = 255;
         let bCenter = 255;
@@ -454,19 +513,26 @@ export function SkyMotionBackdrop() {
         let gEdge = 249;
         let bEdge = 255;
 
-        if (storm > 0.05) {
-          rCenter = Math.round(255 - storm * 187 + lightningGlow * 180);
-          gCenter = Math.round(255 - storm * 173 + lightningGlow * 180);
-          bCenter = Math.round(255 - storm * 150 + lightningGlow * 200);
-          rEdge = Math.round(240 - storm * 198);
-          gEdge = Math.round(249 - storm * 196);
-          bEdge = Math.round(255 - storm * 183);
+        if (snowFactor > 0.2 && rainFactor < 0.3) {
+          // Bright cool wintry clouds during snow
+          rCenter = Math.round(240 + lightningGlow * 80);
+          gCenter = Math.round(246 + lightningGlow * 80);
+          bCenter = 255;
+          rEdge = 205;
+          gEdge = 224;
+          bEdge = 245;
+        } else if (overcastFactor > 0.05) {
+          rCenter = Math.round(255 - overcastFactor * 182 + lightningGlow * 180);
+          gCenter = Math.round(255 - overcastFactor * 168 + lightningGlow * 180);
+          bCenter = Math.round(255 - overcastFactor * 145 + lightningGlow * 200);
+          rEdge = Math.round(240 - overcastFactor * 192);
+          gEdge = Math.round(249 - overcastFactor * 190);
+          bEdge = Math.round(255 - overcastFactor * 176);
         } else if (soreFactor > 0.05) {
-          // Warm peach clouds with amber golden edges
-          rCenter = Math.round(255);
+          rCenter = 255;
           gCenter = Math.round(255 - soreFactor * 55);
           bCenter = Math.round(255 - soreFactor * 95);
-          rEdge = Math.round(255);
+          rEdge = 255;
           gEdge = Math.round(240 - soreFactor * 80);
           bEdge = Math.round(220 - soreFactor * 130);
         } else if (nightFactor > 0.05) {
@@ -478,14 +544,13 @@ export function SkyMotionBackdrop() {
           bEdge = Math.round(255 - nightFactor * 175);
         }
 
-        const baseAlpha =
-          storm > 0
-            ? 0.22 + storm * 0.42
-            : soreFactor > 0
-              ? 0.24 + soreFactor * 0.28
-              : nightFactor > 0
-                ? 0.22 + nightFactor * 0.36
-                : 0.22;
+        const baseAlpha = clamp01(
+          0.22 +
+            overcastFactor * 0.4 +
+            snowFactor * 0.22 +
+            soreFactor * 0.25 +
+            nightFactor * 0.32
+        );
 
         const grad = ctx.createRadialGradient(
           cloud.x,
@@ -514,7 +579,7 @@ export function SkyMotionBackdrop() {
         ctx.restore();
       }
 
-      // 4. Large clearly visible Airplanes
+      // 4. Clearly visible Airplanes
       for (let i = 0; i < planes.length; i++) {
         const plane = planes[i];
         if (!prefersReducedMotion) {
@@ -551,7 +616,7 @@ export function SkyMotionBackdrop() {
             const p0 = plane.trail[j - 1];
             const p1 = plane.trail[j];
             const ratio = j / plane.trail.length;
-            const trailAlpha = ratio * (storm > 0 ? 0.25 : soreFactor > 0 ? 0.4 : 0.45);
+            const trailAlpha = ratio * (rainFactor > 0.3 ? 0.25 : soreFactor > 0.3 ? 0.4 : 0.45);
             ctx.strokeStyle =
               soreFactor > 0.35
                 ? `rgba(255, 230, 210, ${trailAlpha})`
@@ -573,17 +638,17 @@ export function SkyMotionBackdrop() {
           visualAngle,
           plane.scale,
           plane.direction,
-          storm,
+          rainFactor,
+          snowFactor,
           nightFactor,
           soreFactor,
           beaconPhase
         );
       }
 
-      // 5. Rain during storm
-      if (storm > 0.18 && !prefersReducedMotion) {
-        const rainIntensity = clamp01((storm - 0.18) / 0.62);
-        const activeDrops = Math.floor(raindrops.length * rainIntensity);
+      // 5. Random Weather: Rain
+      if (rainFactor > 0.04 && !prefersReducedMotion) {
+        const activeDrops = Math.floor(raindrops.length * rainFactor);
         const windDx = -145;
 
         ctx.lineCap = 'round';
@@ -597,12 +662,54 @@ export function SkyMotionBackdrop() {
             drop.x = Math.random() * (width + 240);
           }
 
-          ctx.strokeStyle = `rgba(226, 240, 255, ${drop.alpha * rainIntensity})`;
+          ctx.strokeStyle = `rgba(226, 240, 255, ${drop.alpha * rainFactor})`;
           ctx.lineWidth = drop.thickness;
           ctx.beginPath();
           ctx.moveTo(drop.x, drop.y);
           ctx.lineTo(drop.x + (windDx / drop.speed) * drop.len, drop.y + drop.len);
           ctx.stroke();
+        }
+      }
+
+      // 6. Random Weather: Snow (Salju)
+      if (snowFactor > 0.04 && !prefersReducedMotion) {
+        const activeFlakes = Math.floor(snowflakes.length * snowFactor);
+        for (let i = 0; i < activeFlakes; i++) {
+          const flake = snowflakes[i];
+          flake.y += flake.speedY * dt;
+          const sway =
+            Math.sin(elapsedSec * flake.driftFreq + flake.phase) *
+            flake.driftAmp *
+            dt;
+          flake.x += sway - 10 * dt;
+
+          if (flake.y > height + 15) {
+            flake.y = -15;
+            flake.x = Math.random() * (width + 80);
+          }
+          if (flake.x < -20) {
+            flake.x = width + 20;
+          } else if (flake.x > width + 20) {
+            flake.x = -20;
+          }
+
+          const flakeGrad = ctx.createRadialGradient(
+            flake.x,
+            flake.y,
+            0,
+            flake.x,
+            flake.y,
+            flake.radius
+          );
+          const alpha = flake.alpha * snowFactor;
+          flakeGrad.addColorStop(0, `rgba(255, 255, 255, ${alpha})`);
+          flakeGrad.addColorStop(0.6, `rgba(240, 248, 255, ${alpha * 0.7})`);
+          flakeGrad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+
+          ctx.fillStyle = flakeGrad;
+          ctx.beginPath();
+          ctx.arc(flake.x, flake.y, flake.radius, 0, Math.PI * 2);
+          ctx.fill();
         }
       }
 
@@ -646,17 +753,15 @@ export function SkyMotionBackdrop() {
       <div
         ref={tintRef}
         aria-hidden="true"
-        className="absolute inset-0 transition-all duration-300"
+        className="absolute inset-0"
       />
 
-      {/* Canvas for Clouds, Planes, Stars & Rain */}
+      {/* Canvas for Clouds, Planes, Stars, Rain & Snow */}
       <canvas
         ref={canvasRef}
         aria-hidden="true"
         className="absolute inset-0 h-full w-full"
       />
-
-
 
       <div className="absolute inset-0 bg-gradient-to-b from-sky-900/15 via-transparent to-sky-950/20" />
     </div>

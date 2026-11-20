@@ -1,125 +1,97 @@
-export type SkyPhase = 'Hujan' | 'Pagi' | 'Siang' | 'Sore' | 'Malam';
+export type SkyPeriod = 'Pagi' | 'Siang' | 'Sore' | 'Malam';
+export type WeatherKind = 'cerah' | 'mendung' | 'hujan' | 'salju';
 
-export interface SkyWeatherState {
-  phase: SkyPhase;
-  label: string;
-  icon: string;
+export interface SkyTimeState {
+  period: SkyPeriod;
   hour: number;
   minute: number;
   timeString: string;
-  storm: number; // 0 to 1
   morningFactor: number; // 0 to 1
+  dayFactor: number; // 0 to 1
   soreFactor: number; // 0 to 1
   nightFactor: number; // 0 to 1
-  dayFactor: number; // 0 to 1
 }
 
-// Global start timestamp so all components stay 100% in sync
+// Global start timestamp so all components stay synchronized
 export const SKY_START_TIME = Date.now();
 
-// Fast continuous 40-second cycle:
-// 0s - 8s (8s): 🌧️ Hujan & Mendung (Initial entry greeting! Jam 03:30 - 05:30)
-// 8s - 16s (8s): 🌅 Pagi (Golden sunrise, Jam 05:30 - 10:30)
-// 16s - 24s (8s): ☀️ Siang (Bright daylight, Jam 10:30 - 15:30)
-// 24s - 32s (8s): 🌇 Sore (Sunset dusk amber glow, Jam 15:30 - 18:45)
-// 32s - 40s (8s): 🌙 Malam (Starry night, Jam 18:45 - 03:30)
-export const CYCLE_DURATION_SEC = 40;
+// Fast continuous 32-second 24-hour cycle (starts around 05:30 sunrise)
+export const DAY_CYCLE_DURATION_SEC = 32;
 
-function lerp(a: number, b: number, t: number): number {
-  return a + (b - a) * t;
+function smoothstep(edge0: number, edge1: number, x: number): number {
+  const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)));
+  return t * t * (3 - 2 * t);
 }
 
-export function getSkyWeatherState(elapsedSec: number): SkyWeatherState {
-  const cycle = elapsedSec % CYCLE_DURATION_SEC;
+export function getSkyTimeState(elapsedSec: number): SkyTimeState {
+  const cycleProgress = (elapsedSec % DAY_CYCLE_DURATION_SEC) / DAY_CYCLE_DURATION_SEC;
+  // Start at 05:30 (5.5h) so visitors experience dawn -> day -> dusk -> night smoothly
+  const hourDecimal = (5.5 + cycleProgress * 24) % 24;
 
-  let phase: SkyPhase = 'Hujan';
-  let label = 'Hujan';
-  let icon = '🌧️';
-  let currentHourDecimal = 4.0;
-  let storm = 0;
-  let morningFactor = 0;
-  let soreFactor = 0;
-  let nightFactor = 0;
-  let dayFactor = 0;
-
-  if (cycle < 8) {
-    // 1. Hujan & Mendung (Jam 03:30 - 05:30)
-    const p = cycle / 8;
-    currentHourDecimal = 3.5 + p * 2.0;
-    phase = 'Hujan';
-    label = 'Hujan';
-    icon = '🌧️';
-    storm = p < 0.65 ? 1 : 1 - (p - 0.65) / 0.35;
-    morningFactor = p > 0.75 ? (p - 0.75) / 0.25 : 0;
-    nightFactor = p < 0.25 ? (1 - p / 0.25) * 0.4 : 0;
-  } else if (cycle < 16) {
-    // 2. Pagi (Jam 05:30 - 10:30)
-    const p = (cycle - 8) / 8;
-    currentHourDecimal = 5.5 + p * 5.0;
-    phase = 'Pagi';
-    label = 'Pagi';
-    icon = '🌅';
-    storm = 0;
-    morningFactor = p < 0.5 ? 1 : 1 - (p - 0.5) / 0.5;
-    dayFactor = p > 0.5 ? (p - 0.5) / 0.5 : 0;
-  } else if (cycle < 24) {
-    // 3. Siang (Jam 10:30 - 15:30)
-    const p = (cycle - 16) / 8;
-    currentHourDecimal = 10.5 + p * 5.0;
-    phase = 'Siang';
-    label = 'Siang';
-    icon = '☀️';
-    storm = 0;
-    morningFactor = 0;
-    dayFactor = 1;
-    soreFactor = p > 0.75 ? (p - 0.75) / 0.25 : 0;
-  } else if (cycle < 32) {
-    // 4. Sore (Jam 15:30 - 18:45)
-    const p = (cycle - 24) / 8;
-    currentHourDecimal = 15.5 + p * 3.25;
-    phase = 'Sore';
-    label = 'Sore';
-    icon = '🌇';
-    storm = 0;
-    soreFactor = p < 0.6 ? 1 : 1 - (p - 0.6) / 0.4;
-    nightFactor = p > 0.55 ? (p - 0.55) / 0.45 : 0;
-  } else {
-    // 5. Malam (Jam 18:45 - 03:30)
-    const p = (cycle - 32) / 8;
-    currentHourDecimal = (18.75 + p * 8.75) % 24;
-    phase = 'Malam';
-    label = 'Malam';
-    icon = '🌙';
-    nightFactor = p < 0.8 ? 1 : 1 - (p - 0.8) / 0.2;
-    storm = p > 0.82 ? (p - 0.82) / 0.18 : 0;
-  }
-
-  const hour = Math.floor(currentHourDecimal);
-  const minute = Math.floor((currentHourDecimal - hour) * 60);
+  const hour = Math.floor(hourDecimal);
+  const minute = Math.floor((hourDecimal - hour) * 60);
   const timeString = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
 
+  // Smooth lighting weights across 24 hours
+  let morningFactor = 0;
+  let dayFactor = 0;
+  let soreFactor = 0;
+  let nightFactor = 0;
+  let period: SkyPeriod = 'Siang';
+
+  if (hourDecimal >= 5 && hourDecimal < 9.5) {
+    period = 'Pagi';
+    if (hourDecimal < 7.5) {
+      morningFactor = smoothstep(4.5, 6.2, hourDecimal);
+      nightFactor = 1 - smoothstep(5.0, 6.5, hourDecimal);
+    } else {
+      morningFactor = 1 - smoothstep(7.5, 9.5, hourDecimal);
+      dayFactor = smoothstep(7.5, 9.5, hourDecimal);
+    }
+  } else if (hourDecimal >= 9.5 && hourDecimal < 15.5) {
+    period = 'Siang';
+    dayFactor = 1;
+  } else if (hourDecimal >= 15.5 && hourDecimal < 19.0) {
+    period = 'Sore';
+    if (hourDecimal < 17.5) {
+      dayFactor = 1 - smoothstep(15.5, 17.2, hourDecimal);
+      soreFactor = smoothstep(15.5, 17.2, hourDecimal);
+    } else {
+      soreFactor = 1 - smoothstep(17.5, 19.0, hourDecimal);
+      nightFactor = smoothstep(17.4, 19.0, hourDecimal);
+    }
+  } else {
+    period = 'Malam';
+    if (hourDecimal >= 4.0 && hourDecimal < 5.0) {
+      nightFactor = 1 - smoothstep(4.2, 5.0, hourDecimal) * 0.4;
+      morningFactor = smoothstep(4.3, 5.0, hourDecimal) * 0.4;
+    } else {
+      nightFactor = 1;
+    }
+  }
+
   return {
-    phase,
-    label,
-    icon,
+    period,
     hour,
     minute,
     timeString,
-    storm,
     morningFactor,
+    dayFactor,
     soreFactor,
     nightFactor,
-    dayFactor,
   };
+}
+
+export function pickRandomWeather(previous?: WeatherKind): WeatherKind {
+  const options: WeatherKind[] = ['cerah', 'mendung', 'hujan', 'salju'];
+  const pool = previous ? options.filter((w) => w !== previous) : options;
+  return pool[Math.floor(Math.random() * pool.length)];
 }
 
 export function getRealWibTime(): {
   timeString: string;
-  period: 'Pagi' | 'Siang' | 'Sore' | 'Malam';
-  icon: string;
 } {
   const now = new Date();
-  // Format to Asia/Jakarta (WIB)
   const jakartaStr = now.toLocaleTimeString('en-US', {
     timeZone: 'Asia/Jakarta',
     hour12: false,
@@ -132,22 +104,5 @@ export function getRealWibTime(): {
   const m = parseInt(mStr || '0', 10);
   const timeString = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')} WIB`;
 
-  let period: 'Pagi' | 'Siang' | 'Sore' | 'Malam' = 'Siang';
-  let icon = '☀️';
-
-  if (h >= 5 && h < 11) {
-    period = 'Pagi';
-    icon = '🌅';
-  } else if (h >= 11 && h < 15) {
-    period = 'Siang';
-    icon = '☀️';
-  } else if (h >= 15 && h < 18) {
-    period = 'Sore';
-    icon = '🌇';
-  } else {
-    period = 'Malam';
-    icon = '🌙';
-  }
-
-  return { timeString, period, icon };
+  return { timeString };
 }

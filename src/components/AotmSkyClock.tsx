@@ -2,21 +2,21 @@ import { useEffect, useState } from 'react';
 import { Clock } from 'lucide-react';
 import {
   getRealWibTime,
-  getSkyWeatherState,
+  getSkyTimeState,
   SKY_START_TIME,
 } from '../lib/skyTime';
 
 export function AotmSkyClock() {
   const [showRealWib, setShowRealWib] = useState(false);
   const [skyTime, setSkyTime] = useState(() =>
-    getSkyWeatherState((Date.now() - SKY_START_TIME) / 1000)
+    getSkyTimeState((Date.now() - SKY_START_TIME) / 1000)
   );
   const [realWib, setRealWib] = useState(getRealWibTime);
 
   useEffect(() => {
     const interval = window.setInterval(() => {
       const elapsedSec = (Date.now() - SKY_START_TIME) / 1000;
-      setSkyTime(getSkyWeatherState(elapsedSec));
+      setSkyTime(getSkyTimeState(elapsedSec));
       setRealWib(getRealWibTime());
     }, 250);
 
