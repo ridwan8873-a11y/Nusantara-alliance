@@ -5,6 +5,7 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 import { AirlinesOfTheMoonSection } from './components/AirlinesOfTheMoonSection';
+import { AotmMusicPlayer } from './components/AotmMusicPlayer';
 import { LoadingSplash } from './components/LoadingSplash';
 import { Navbar } from './components/Navbar';
 import { SkyMotionBackdrop } from './components/SkyMotionBackdrop';
@@ -137,6 +138,7 @@ export default function App() {
           </div>
         </footer>
       </div>
+      <AotmMusicPlayer />
     </div>
   );
 }
