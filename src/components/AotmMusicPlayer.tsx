@@ -30,6 +30,12 @@ const MCR_PLAYLIST: PlaylistTrack[] = [
     artist: 'My Chemical Romance',
     videoIds: ['yhMP6VLObZE', 'yTuIDYnRUYs', 'EdKu5tdvaa0'],
   },
+  {
+    id: 'dinda',
+    title: 'Dinda',
+    artist: 'Masdo',
+    videoIds: ['13YRltFWIps'],
+  },
 ];
 
 interface YTPlayer {
@@ -502,7 +508,7 @@ export function AotmMusicPlayer() {
 
           {/* Right: Track Switcher + Desktop Controls + Volume 100% */}
           <div className="flex flex-wrap items-center justify-between gap-2.5 border-t border-white/10 pt-2 lg:border-t-0 lg:pt-0">
-            <div className="flex items-center gap-1.5">
+            <div className="flex flex-wrap items-center gap-1.5">
               {MCR_PLAYLIST.map((track, idx) => {
                 const active = !localTrack && trackIndex === idx;
                 return (
