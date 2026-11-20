@@ -232,6 +232,71 @@ service cloud.firestore {
         && data.keys().hasOnly(['ticketCode', 'airlineName', 'applicantId', 'status', 'adminNote', 'createdAt', 'updatedAt']);
     }
 
+    function isValidSiteVisitor(data) {
+      return data.keys().hasAll([
+          'visitorId',
+          'visitorType',
+          'displayName',
+          'deviceLabel',
+          'browserLabel',
+          'isOnline',
+          'visitCount',
+          'firstEnteredAt',
+          'lastSeenAt'
+        ])
+        && data.keys().hasOnly([
+          'visitorId',
+          'visitorType',
+          'displayName',
+          'uid',
+          'email',
+          'avatarUrl',
+          'airlineName',
+          'deviceLabel',
+          'browserLabel',
+          'lastPath',
+          'isOnline',
+          'visitCount',
+          'firstEnteredAt',
+          'lastSeenAt'
+        ])
+        && isValidId(data.visitorId)
+        && data.visitorType in ['admin', 'google', 'guest']
+        && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 80
+        && (!('uid' in data) || isValidId(data.uid))
+        && (!('email' in data) || (data.email is string && data.email.size() >= 5 && data.email.size() <= 160))
+        && (!('avatarUrl' in data) || (
+          data.avatarUrl is string
+          && data.avatarUrl.size() >= 8
+          && data.avatarUrl.size() <= 500
+          && data.avatarUrl[0:8] == 'https://'
+        ))
+        && (!('airlineName' in data) || (data.airlineName is string && data.airlineName.size() >= 1 && data.airlineName.size() <= 100))
+        && data.deviceLabel is string && data.deviceLabel.size() >= 1 && data.deviceLabel.size() <= 40
+        && data.browserLabel is string && data.browserLabel.size() >= 1 && data.browserLabel.size() <= 40
+        && (!('lastPath' in data) || (data.lastPath is string && data.lastPath.size() >= 1 && data.lastPath.size() <= 120))
+        && data.isOnline is bool
+        && data.visitCount is number && data.visitCount >= 1 && data.visitCount <= 1000000
+        && data.firstEnteredAt is timestamp
+        && data.lastSeenAt is timestamp;
+    }
+
+    function isValidSiteVisitorActor(visitorId, data) {
+      return (
+        isVerifiedUser()
+        && visitorId == 'user_' + request.auth.uid
+        && ('uid' in data) && data.uid == request.auth.uid
+        && ('email' in data) && data.email == request.auth.token.email
+        && (isAdmin() || data.visitorType == 'google')
+      ) || (
+        visitorId.matches('^guest_[a-zA-Z0-9]{8,40}$')
+        && data.visitorType == 'guest'
+        && !('uid' in data)
+        && !('email' in data)
+        && !('avatarUrl' in data)
+      );
+    }
+
     // 4. Airlines of The Moon Submissions (Create: Verified Users; Read/Update/Delete: Strictly Admin Only)
     match /moonEventSubmissions/{submissionId} {
       allow get: if isValidId(submissionId) && isAdmin();
@@ -397,6 +462,42 @@ service cloud.firestore {
         && incoming().updatedAt == request.time
         && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'adminNote', 'updatedAt']);
       allow delete: if isValidId(registrationId) && isAdmin();
+    }
+
+    // 11. Site Visitors Presence & Entry Log (Self-write by Guest/User; Strictly Read/Delete by Admin Only)
+    match /siteVisitors/{visitorId} {
+      allow get: if isValidId(visitorId) && isAdmin();
+      allow list: if isAdmin();
+      allow create: if isValidId(visitorId)
+        && isValidSiteVisitor(incoming())
+        && incoming().visitorId == visitorId
+        && isValidSiteVisitorActor(visitorId, incoming())
+        && incoming().visitCount == 1
+        && incoming().firstEnteredAt == request.time
+        && incoming().lastSeenAt == request.time;
+      allow update: if isValidId(visitorId)
+        && isValidSiteVisitor(incoming())
+        && incoming().visitorId == existing().visitorId
+        && incoming().firstEnteredAt == existing().firstEnteredAt
+        && incoming().lastSeenAt == request.time
+        && isValidSiteVisitorActor(visitorId, incoming())
+        && incoming().visitCount >= existing().visitCount
+        && incoming().visitCount <= existing().visitCount + 1
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'visitorType',
+          'displayName',
+          'uid',
+          'email',
+          'avatarUrl',
+          'airlineName',
+          'deviceLabel',
+          'browserLabel',
+          'lastPath',
+          'isOnline',
+          'visitCount',
+          'lastSeenAt'
+        ]);
+      allow delete: if isValidId(visitorId) && isAdmin();
     }
   }
 }

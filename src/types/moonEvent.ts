@@ -79,6 +79,25 @@ export interface OnlinePresenceRecord {
   lastSeenAt: Timestamp | null;
 }
 
+export type VisitorType = 'admin' | 'google' | 'guest';
+
+export interface SiteVisitorRecord {
+  visitorId: string;
+  visitorType: VisitorType;
+  displayName: string;
+  uid?: string;
+  email?: string;
+  avatarUrl?: string;
+  airlineName?: string;
+  deviceLabel: string;
+  browserLabel: string;
+  lastPath?: string;
+  isOnline: boolean;
+  visitCount: number;
+  firstEnteredAt: Timestamp | null;
+  lastSeenAt: Timestamp | null;
+}
+
 export type AotmEventPhase =
   | 'before_open'
   | 'submission_open'

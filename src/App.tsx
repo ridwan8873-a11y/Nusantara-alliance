@@ -51,7 +51,7 @@ export default function App() {
     }
   };
 
-  const presence = useOnlinePresence(user, isVerifiedUser, isAdmin);
+  const presence = useOnlinePresence(user, authReady, isVerifiedUser, isAdmin);
 
   const handleAdminFooterLogin = async () => {
     if (isAdmin) {

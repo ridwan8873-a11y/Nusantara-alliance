@@ -210,6 +210,79 @@
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["ticketCode", "airlineName", "applicantId", "status", "createdAt", "updatedAt"]
+    },
+    "SiteVisitor": {
+      "title": "SiteVisitor",
+      "description": "Real-time online presence and entry history of website visitors (guests and signed-in Google users), readable strictly by admin",
+      "type": "object",
+      "properties": {
+        "visitorId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "visitorType": {
+          "type": "string",
+          "enum": ["admin", "google", "guest"]
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "email": {
+          "type": "string",
+          "minLength": 5,
+          "maxLength": 160
+        },
+        "avatarUrl": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 500
+        },
+        "airlineName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "deviceLabel": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "browserLabel": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "lastPath": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "isOnline": { "type": "boolean" },
+        "visitCount": { "type": "number" },
+        "firstEnteredAt": { "type": "string", "format": "date-time" },
+        "lastSeenAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "visitorId",
+        "visitorType",
+        "displayName",
+        "deviceLabel",
+        "browserLabel",
+        "isOnline",
+        "visitCount",
+        "firstEnteredAt",
+        "lastSeenAt"
+      ]
     }
   },
   "firestore": {
@@ -240,6 +313,10 @@
     "/allianceRegistrations/{registrationId}": {
       "schema": { "$ref": "#/entities/AllianceRegistration" },
       "description": "Live airline registration queue tickets"
+    },
+    "/siteVisitors/{visitorId}": {
+      "schema": { "$ref": "#/entities/SiteVisitor" },
+      "description": "Real-time presence and entry log of all visitors (guests and verified Google users) — strictly readable and deletable only by admin"
     }
   }
 }
